@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: undervalued-estate-api
+    env: node
+    rootDirectory: server
+    plan: free
+    buildCommand: NPM_CONFIG_PRODUCTION=false npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Pin Node for consistent runtime
+      - key: NODE_VERSION
+        value: 20
+      # Set these in the Render dashboard (or via Blueprint secrets)
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: API_SECRET
+        sync: false
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_PASS
+        sync: false
+
+staticSites:
+  - name: undervalued-estate-frontend
+    rootDirectory: frontend
+    buildCommand: npm ci && npm run build
+    publishPath: dist
+    pullRequestPreviewsEnabled: true
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false

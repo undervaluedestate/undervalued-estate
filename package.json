@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "name": "undervalued-estate-monorepo",
+  "workspaces": ["server", "frontend"],
+  "scripts": {
+    "postinstall": "npm --prefix server ci && npm --prefix frontend ci"
+  }
+}
