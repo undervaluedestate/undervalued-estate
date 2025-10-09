@@ -93,16 +93,34 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     let longitude: number | null = null;
     
     // First try: <address> element (common pattern in NPC)
-    // Capture ALL content including icons and whitespace - user wants everything
+    // Capture ALL content including icons, text nodes, and nested elements
     const addressEl = $('address').first();
     if (addressEl.length) {
-      // Get the entire HTML content of the address element
-      const addressHtml = addressEl.html();
-      if (addressHtml) {
-        // Decode HTML entities and clean up (but preserve all content)
-        const decoded = $('<div/>').html(addressHtml).text().trim();
-        // Normalize whitespace but keep all characters
-        address_line1 = decoded.replace(/[\s\n]+/g, ' ').trim();
+      // Get all text nodes including those in nested elements
+      const textNodes: string[] = [];
+      
+      // Process all text nodes in the address element
+      addressEl.contents().each((index: number, node: any) => {
+        if (node.type === 'text') {
+          textNodes.push($(node).text().trim());
+        } else if (node.type === 'tag' && node.name === 'i') {
+          // Include icon elements (like fa-map-marker) as text
+          textNodes.push($(node).text().trim());
+        } else if (node.type === 'tag') {
+          // For other elements, include their text content
+          textNodes.push($(node).text().trim());
+        }
+      });
+      
+      // Join all text parts with spaces and clean up
+      const fullText = textNodes
+        .filter(Boolean)  // Remove empty strings
+        .join(' ')        // Join with single spaces
+        .replace(/[\s\n]+/g, ' ')  // Normalize whitespace
+        .trim();
+      
+      if (fullText) {
+        address_line1 = fullText;
       }
     }
     

@@ -85,6 +85,9 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         const title = pickText($('h1.property-title, h1[itemprop="name"], h1.title, h1')) || null;
         // Address line 1 (estate / street)
         let address_line1 = null;
+        let postal_code = null;
+        let latitude = null;
+        let longitude = null;
         const addrCandidates = [
             '.address',
             '.property-address',
@@ -98,6 +101,20 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
             if (t && t.length >= 3) {
                 address_line1 = t;
                 break;
+            }
+        }
+        // Try to read Address from common detail rows: name/value list items
+        if (!address_line1) {
+            const detailRows = $('.property-details li, .details li, .key-details li, .facts li').toArray();
+            for (const li of detailRows) {
+                const name = $(li).find('.name, .label, .title').text().trim().toLowerCase();
+                const val = $(li).find('.value, .text').text().trim();
+                if (!val || val.length < 3)
+                    continue;
+                if (name.includes('address') || name.includes('location') || name.includes('street') || name.includes('estate')) {
+                    address_line1 = val;
+                    break;
+                }
             }
         }
         // Price selectors
@@ -114,7 +131,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         catch {
             external_id = url;
         }
-        // Location from breadcrumb
+        // Location from breadcrumb (do this before JSON-LD so composed address can include these)
         let city = null;
         let state = null;
         let neighborhood = null;
@@ -131,6 +148,55 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                 state = null;
             if (neighborhood && /home|for\s*sale/i.test(neighborhood))
                 neighborhood = null;
+        }
+        // JSON-LD PostalAddress + geo (after we have city/state/neighborhood)
+        try {
+            $('script[type="application/ld+json"]').each((_idx, el) => {
+                const txt = $(el).contents().text();
+                if (!txt || txt.length < 2)
+                    return;
+                try {
+                    const data = JSON.parse(txt);
+                    const walk = (node) => {
+                        if (!node)
+                            return;
+                        if (typeof node === 'object') {
+                            const maybeAddr = (node.address && typeof node.address === 'object') ? node.address : (node['@type'] === 'PostalAddress' ? node : null);
+                            if (maybeAddr) {
+                                const street = maybeAddr.streetAddress || maybeAddr.address1 || maybeAddr.addressLine1 || null;
+                                const locality = maybeAddr.addressLocality || maybeAddr.locality || maybeAddr.city || city || null;
+                                const region = maybeAddr.addressRegion || maybeAddr.region || maybeAddr.state || state || null;
+                                const pc = maybeAddr.postalCode || maybeAddr.postcode || maybeAddr.zipCode || null;
+                                const neigh = maybeAddr.neighborhood || maybeAddr.addressNeighborhood || neighborhood || null;
+                                const parts = [street, neigh, locality, region, pc].filter(Boolean).map((s) => String(s).trim());
+                                if (!address_line1 && parts.length)
+                                    address_line1 = parts.join(', ');
+                                if (!postal_code && pc)
+                                    postal_code = String(pc);
+                            }
+                            if (node.geo && typeof node.geo === 'object') {
+                                const lat = Number(node.geo.latitude ?? node.geo.lat);
+                                const lng = Number(node.geo.longitude ?? node.geo.lng);
+                                if (Number.isFinite(lat) && Number.isFinite(lng)) {
+                                    latitude = lat;
+                                    longitude = lng;
+                                }
+                            }
+                            Object.values(node).forEach(walk);
+                            return;
+                        }
+                    };
+                    walk(data);
+                }
+                catch { /* ignore non-JSON */ }
+            });
+        }
+        catch { /* ignore */ }
+        // Fallback: if we still lack a street/estate, compose a full address from available parts
+        if (!address_line1) {
+            const parts = [neighborhood, city, state, 'Nigeria'].filter(Boolean).map((s) => String(s).trim());
+            if (parts.length)
+                address_line1 = parts.join(', ');
         }
         // Fallback: if we still lack a street/estate, compose a full address from available parts
         if (!address_line1) {
@@ -165,11 +231,11 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
             neighborhood,
             city,
             state,
-            postal_code: null,
+            postal_code,
             listing_type,
             country: 'Nigeria',
-            latitude: null,
-            longitude: null,
+            latitude,
+            longitude,
             listed_at: listedAt,
             is_active: true,
             raw: { source: 'NigeriaPropertyCentre', url }
