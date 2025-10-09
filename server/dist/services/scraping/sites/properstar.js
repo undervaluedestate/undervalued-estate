@@ -235,6 +235,71 @@ export class ProperstarAdapter extends BaseAdapter {
         catch { }
         if (!country)
             country = 'United Kingdom';
+        // Address extraction: JSON-LD, microdata, and fallbacks
+        let address_line1 = null;
+        let address_line2 = null;
+        let postal_code = null;
+        let latitude = null;
+        let longitude = null;
+        // Microdata and common selectors
+        try {
+            const streetText = pickText($('[itemprop="streetAddress"], .address, .listing-address, [data-testid="street-address"]'));
+            if (streetText) {
+                const parts = [streetText, neighborhood, city, state].filter(Boolean).map((s) => String(s).trim());
+                if (parts.length)
+                    address_line1 = parts.join(', ');
+            }
+        }
+        catch { /* ignore */ }
+        // JSON-LD scanning for PostalAddress and geo
+        try {
+            $('script[type="application/ld+json"]').each((_, el) => {
+                const txt = $(el).contents().text();
+                if (!txt || txt.length < 2)
+                    return;
+                try {
+                    const data = JSON.parse(txt);
+                    const walk = (node) => {
+                        if (!node)
+                            return;
+                        if (typeof node === 'object') {
+                            const maybeAddr = (node.address && typeof node.address === 'object') ? node.address : (node['@type'] === 'PostalAddress' ? node : null);
+                            if (maybeAddr) {
+                                const street = maybeAddr.streetAddress || maybeAddr.address1 || maybeAddr.addressLine1 || null;
+                                const locality = maybeAddr.addressLocality || maybeAddr.locality || maybeAddr.city || null;
+                                const region = maybeAddr.addressRegion || maybeAddr.region || maybeAddr.state || null;
+                                const pc = maybeAddr.postalCode || maybeAddr.postcode || maybeAddr.zipCode || null;
+                                const neigh = maybeAddr.neighborhood || maybeAddr.addressNeighborhood || neighborhood || null;
+                                const parts = [street, neigh, locality, region, pc].filter(Boolean).map((s) => String(s).trim());
+                                if (!address_line1 && parts.length)
+                                    address_line1 = parts.join(', ');
+                                if (!postal_code && pc)
+                                    postal_code = String(pc);
+                            }
+                            if (node.geo && typeof node.geo === 'object') {
+                                const lat = Number(node.geo.latitude ?? node.geo.lat);
+                                const lng = Number(node.geo.longitude ?? node.geo.lng);
+                                if (Number.isFinite(lat) && Number.isFinite(lng)) {
+                                    latitude = lat;
+                                    longitude = lng;
+                                }
+                            }
+                            Object.values(node).forEach(walk);
+                            return;
+                        }
+                    };
+                    walk(data);
+                }
+                catch { /* ignore non-JSON */ }
+            });
+        }
+        catch { /* ignore */ }
+        // Fallback: compose from available parts if still missing
+        if (!address_line1) {
+            const parts = [neighborhood, city, state, country].filter(Boolean).map((s) => String(s).trim());
+            if (parts.length)
+                address_line1 = parts.join(', ');
+        }
         // Bedrooms/Bathrooms
         const metaText = $('body').text();
         const bedMatch = metaText.match(/(\d+)\s*(bed|bedroom)s?/i);
@@ -262,15 +327,15 @@ export class ProperstarAdapter extends BaseAdapter {
             size: sizeMatch ? sizeMatch[0] : undefined,
             bedrooms: bedMatch ? Number(bedMatch[1]) : undefined,
             bathrooms: bathMatch ? Number(bathMatch[1]) : undefined,
-            address_line1: null,
-            address_line2: null,
+            address_line1,
+            address_line2,
             neighborhood: neighborhood || null,
             city,
             state,
-            postal_code: null,
+            postal_code,
             country,
-            latitude: null,
-            longitude: null,
+            latitude,
+            longitude,
             listed_at: listedAt,
             is_active: true,
             raw: { url },

@@ -94,7 +94,8 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         ];
         for (const sel of addrCandidates) {
             const t = pickText($(sel));
-            if (t && t.length >= 3 && !/lekki|lagos|nigeria/i.test(t)) {
+            // Accept address text even if it contains city/state (user prefers completeness over cleanliness)
+            if (t && t.length >= 3) {
                 address_line1 = t;
                 break;
             }
@@ -130,6 +131,12 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                 state = null;
             if (neighborhood && /home|for\s*sale/i.test(neighborhood))
                 neighborhood = null;
+        }
+        // Fallback: if we still lack a street/estate, compose a full address from available parts
+        if (!address_line1) {
+            const parts = [neighborhood, city, state, 'Nigeria'].filter(Boolean).map((s) => String(s).trim());
+            if (parts.length)
+                address_line1 = parts.join(', ');
         }
         // Property meta lists
         const metaLis = $('.property-meta li, .facts li, ul.meta li').map((_i, li) => $(li).text().trim()).get();

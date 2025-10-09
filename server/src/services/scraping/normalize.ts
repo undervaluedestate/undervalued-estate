@@ -62,6 +62,13 @@ export function normalizeToProperty(input: Partial<NormalizedProperty> & { exter
     raw,
   } = input as any;
 
+  // Compose a fallback address when a scraper doesn't provide a street/estate.
+  // This favors completeness: address_line1 may include neighborhood/city/state/postal_code/country.
+  const composedAddress: string | null = address_line1 ?? ((): string | null => {
+    const parts = [neighborhood, city, state, postal_code, country].filter(Boolean).map((s: any) => String(s).trim());
+    return parts.length ? parts.join(', ') : null;
+  })();
+
   return {
     source_id: source?.id,
     external_id,
@@ -74,7 +81,7 @@ export function normalizeToProperty(input: Partial<NormalizedProperty> & { exter
     bedrooms: toNumberSafe(bedrooms),
     bathrooms: toNumberSafe(bathrooms),
     property_type: mapPropertyType(property_type),
-    address_line1: address_line1 ?? null,
+    address_line1: composedAddress,
     address_line2: address_line2 ?? null,
     neighborhood: neighborhood ?? null,
     city: city ?? null,
