@@ -91,6 +91,22 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     let postal_code: string | null = null;
     let latitude: number | null = null;
     let longitude: number | null = null;
+    
+    // First try: <address> element (common pattern in NPC)
+    // Capture ALL content including icons and whitespace - user wants everything
+    const addressEl = $('address').first();
+    if (addressEl.length) {
+      // Get the entire HTML content of the address element
+      const addressHtml = addressEl.html();
+      if (addressHtml) {
+        // Decode HTML entities and clean up (but preserve all content)
+        const decoded = $('<div/>').html(addressHtml).text().trim();
+        // Normalize whitespace but keep all characters
+        address_line1 = decoded.replace(/[\s\n]+/g, ' ').trim();
+      }
+    }
+    
+    // Then try common selectors
     const addrCandidates = [
       '.address',
       '.property-address',
@@ -185,6 +201,29 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         } catch { /* ignore non-JSON */ }
       });
     } catch { /* ignore */ }
+
+    // Fallback: try to extract from embedded Google Maps links
+    if (!address_line1) {
+      const mapLink = $('a[href*="google.com/maps"], a[href*="goo.gl/maps"], a[href*="maps.app.goo.gl"], iframe[src*="google.com/maps"]').first();
+      const href = mapLink.attr('href') || mapLink.attr('src') || '';
+      if (href) {
+        try {
+          const u = new URL(href, url);
+          // Prefer q parameter
+          const q = u.searchParams.get('q') || u.searchParams.get('query');
+          if (q && q.trim().length > 3) {
+            address_line1 = decodeURIComponent(q).trim();
+          } else {
+            // Try to parse /place/<name>/ or path segments
+            const segs = u.pathname.split('/').filter(Boolean);
+            const placeIdx = segs.indexOf('place');
+            if (placeIdx >= 0 && segs[placeIdx + 1]) {
+              address_line1 = decodeURIComponent(segs[placeIdx + 1].replace(/\+/g, ' ')).trim();
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    }
 
     // Fallback: if we still lack a street/estate, compose a full address from available parts
     if (!address_line1) {
