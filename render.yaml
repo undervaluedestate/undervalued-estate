@@ -13,7 +13,7 @@ services:
       - key: NODE_VERSION
         value: 20
 
-  - type: static
+  - type: web
     name: undervalued-estate-frontend
     rootDir: frontend
     buildCommand: npm ci && npm run build
