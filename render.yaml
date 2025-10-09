@@ -13,9 +13,9 @@ services:
       - key: NODE_VERSION
         value: 20
 
-  - type: static
+  - type: static_site
     name: undervalued-estate-frontend
     rootDir: frontend
     buildCommand: npm ci && npm run build
-    staticPublishPath: dist
+    publishPath: dist
     pullRequestPreviewsEnabled: true
