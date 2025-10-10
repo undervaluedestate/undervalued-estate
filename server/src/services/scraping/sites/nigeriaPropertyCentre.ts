@@ -83,7 +83,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     };
 
     // Helper to trim promos, labels and enrich with nearby cues and breadcrumb
-    const postProcessAddress = (raw: string): string => {
+    const postProcessAddress = (raw: string, opts?: { strict?: boolean }): string => {
       if (!raw) return raw;
       let s = String(raw);
       // Remove label prefixes
@@ -93,31 +93,33 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         s = s.replace(/^[\s\S]*?\b(Prime\s*Location|Location)\s*:\s*/i, '');
       }
       // Normalize whitespace
-      s = s.replace(/[\s\n]+/g, ' ').trim();
+      s = s.replace(/[\s\n]+/g, ' ').replace(/\u00a0|&nbsp;/g, ' ').trim();
       // Cut at promo keywords if they appear inside the candidate
       const stopRe = /(Delivery\s*Date|Exclusive\b|Apartment\s*Highlights|Luxury\b|A\s*Premium\b|Facilities\b|Features\b|Fully\s+Equipped|Generator\b|Gym\b|Parking\b|Bedrooms?\b|\b\d+\s*sqm)/i;
       const pos = s.search(stopRe);
       if (pos >= 0) s = s.slice(0, pos).trim();
-      // Remove landmark phrases like ", by <place>"
-      s = s.replace(/,\s*by\s+[^,|;:.]+/gi, '');
-      // Prepend an "Off <road>" phrase if present in page and not already in s
-      try {
-        const full = $('body').text();
-        const offNear = full.match(/\boff\s+[A-Za-z][^,|;.]{2,60}/i);
-        if (offNear && !/\boff\s/i.test(s)) {
-          const offStr = offNear[0].replace(/[\s\n]+/g, ' ').trim();
-          s = `${offStr}, ${s}`;
-        }
-      } catch { /* ignore */ }
-      // Append breadcrumb parts if missing
-      const bc = $('.breadcrumb li, nav.breadcrumb li, [class*="breadcrumb" i] li').map((_i, li) => $(li).text().trim()).get().filter(Boolean);
-      const neigh = bc[bc.length - 1] || '';
-      const cty = bc[bc.length - 2] || '';
-      const st = bc[bc.length - 3] || '';
-      const needPart = (part: string) => part && !new RegExp(`\\b${part.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i').test(s);
-      if (needPart(neigh)) s += `, ${neigh}`;
-      if (needPart(cty)) s += `, ${cty}`;
-      if (needPart(st)) s += `, ${st}`;
+      if (!opts?.strict) {
+        // Remove landmark phrases like ", by <place>"
+        s = s.replace(/,\s*by\s+[^,|;:.]+/gi, '');
+        // Prepend an "Off <road>" phrase if present in page and not already in s
+        try {
+          const full = $('body').text();
+          const offNear = full.match(/\boff\s+[A-Za-z][^,|;.]{2,60}/i);
+          if (offNear && !/\boff\s/i.test(s)) {
+            const offStr = offNear[0].replace(/[\s\n]+/g, ' ').trim();
+            s = `${offStr}, ${s}`;
+          }
+        } catch { /* ignore */ }
+        // Append breadcrumb parts if missing
+        const bc = $('.breadcrumb li, nav.breadcrumb li, [class*="breadcrumb" i] li').map((_i, li) => $(li).text().trim()).get().filter(Boolean);
+        const neigh = bc[bc.length - 1] || '';
+        const cty = bc[bc.length - 2] || '';
+        const st = bc[bc.length - 3] || '';
+        const needPart = (part: string) => part && !new RegExp(`\\b${part.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i').test(s);
+        if (needPart(neigh)) s += `, ${neigh}`;
+        if (needPart(cty)) s += `, ${cty}`;
+        if (needPart(st)) s += `, ${st}`;
+      }
       // Remove trailing ", Nigeria"
       s = s.replace(/,\s*Nigeria\s*$/i, '').trim();
       // Keep at most 7 comma parts to avoid dragging too much context
@@ -335,7 +337,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     for (let i = 0; i < addressSources.length; i++) {
       try {
         const raw = addressSources[i]();
-        const processed = raw ? postProcessAddress(raw) : null;
+        const processed = raw ? postProcessAddress(raw, { strict: i === 0 }) : null;
         console.log(`[NPC Scraper] Trying source '${sourceNames[i]}':`, processed || 'No result');
         if (processed && processed.length > 10) {
           const candScore = sourceWeight(i) * 100000 + scoreAddr(processed);
