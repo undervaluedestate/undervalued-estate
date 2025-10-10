@@ -81,6 +81,50 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       const parts = String(s).split(',').length;
       return parts * 1000 + String(s).length;
     };
+
+    // Helper to trim promos, labels and enrich with nearby cues and breadcrumb
+    const postProcessAddress = (raw: string): string => {
+      if (!raw) return raw;
+      let s = String(raw);
+      // Remove label prefixes
+      s = s.replace(/^\s*(Prime\s*Location|Location)\s*:\s*/i, '');
+      // If label occurs later in the string, keep only the portion after it
+      if (/\b(Prime\s*Location|Location)\s*:/i.test(s)) {
+        s = s.replace(/^[\s\S]*?\b(Prime\s*Location|Location)\s*:\s*/i, '');
+      }
+      // Normalize whitespace
+      s = s.replace(/[\s\n]+/g, ' ').trim();
+      // Cut at promo keywords if they appear inside the candidate
+      const stopRe = /(Delivery\s*Date|Exclusive\b|Apartment\s*Highlights|Luxury\b|A\s*Premium\b|Facilities\b|Features\b|Fully\s+Equipped|Generator\b|Gym\b|Parking\b|Bedrooms?\b|\b\d+\s*sqm)/i;
+      const pos = s.search(stopRe);
+      if (pos >= 0) s = s.slice(0, pos).trim();
+      // Remove landmark phrases like ", by <place>"
+      s = s.replace(/,\s*by\s+[^,|;:.]+/gi, '');
+      // Prepend an "Off <road>" phrase if present in page and not already in s
+      try {
+        const full = $('body').text();
+        const offNear = full.match(/\boff\s+[A-Za-z][^,|;.]{2,60}/i);
+        if (offNear && !/\boff\s/i.test(s)) {
+          const offStr = offNear[0].replace(/[\s\n]+/g, ' ').trim();
+          s = `${offStr}, ${s}`;
+        }
+      } catch { /* ignore */ }
+      // Append breadcrumb parts if missing
+      const bc = $('.breadcrumb li, nav.breadcrumb li, [class*="breadcrumb" i] li').map((_i, li) => $(li).text().trim()).get().filter(Boolean);
+      const neigh = bc[bc.length - 1] || '';
+      const cty = bc[bc.length - 2] || '';
+      const st = bc[bc.length - 3] || '';
+      const needPart = (part: string) => part && !new RegExp(`\\b${part.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i').test(s);
+      if (needPart(neigh)) s += `, ${neigh}`;
+      if (needPart(cty)) s += `, ${cty}`;
+      if (needPart(st)) s += `, ${st}`;
+      // Remove trailing ", Nigeria"
+      s = s.replace(/,\s*Nigeria\s*$/i, '').trim();
+      // Keep at most 7 comma parts to avoid dragging too much context
+      const parts = s.split(',').map(x => x.trim()).filter(Boolean);
+      if (parts.length > 7) s = parts.slice(0, 7).join(', ');
+      return s;
+    };
     
     // Debug: Log the URL being processed
     console.log(`\n===== NPC Scraper Debug =====`);
@@ -224,8 +268,23 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         }
         return null;
       },
+
+      // 6. Parse a "Prime Location:" or "Location:" section and trim at known promo labels
+      () => {
+        try {
+          const full = $('body').text();
+          const re = /\b(?:Prime\s*Location|Location)\s*:\s*([\s\S]*?)(?=\b(Delivery\s*Date|Exclusive|Apartment\s*Highlights|Luxury|A\s*Premium|Price|Facilities|Features)\b|$)/i;
+          const m = full.match(re);
+          if (m && m[1]) {
+            let s = m[1].replace(/[\s\n]+/g, ' ').trim();
+            s = s.replace(/\s*\(Ref:.*$/i, '').replace(/\s*\|.*$/, '').trim();
+            return postProcessAddress(s);
+          }
+        } catch { /* ignore */ }
+        return null;
+      },
       
-      // 6. Look for any element with address-like text (regex-based, case-insensitive)
+      // 7. Look for any element with address-like text (regex-based, case-insensitive)
       () => {
         const addrRe = /\b(road|street|avenue|close|drive|way|estate|villa|house|apartment|flat|junction|crescent|highway|boulevard|phase|quarter|quaters|quarters|off\s+[a-z])/i;
         const blocks = $('p, li, .description, .property-description, .details, .key-details, .property-details, .body, .content').toArray();
@@ -234,45 +293,61 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
           let t = $(blocks[i]).text().replace(/[\s\n]+/g, ' ').trim();
           if (!t || t.length < 12) continue;
           if (!addrRe.test(t)) continue;
-          // Split on line/period if present and pick the sub-segment with most commas
-          const segs = t.split(/\.|\n|\r/).map(s => s.trim()).filter(Boolean);
+          // Split on common separators and pick the sub-segment with most commas
+          const segs = t.split(/\.|\n|\r| - /).map(s => s.trim()).filter(Boolean);
           if (segs.length > 1) {
             segs.sort((a, b) => (b.split(',').length - a.split(',').length) || (b.length - a.length));
             t = segs[0];
           }
-          // Trim obvious tails
+          // Trim obvious tails and promos, then enrich
           t = t.replace(/\s*\(Ref:.*$/i, '').replace(/\s*\|.*$/, '').trim();
+          t = postProcessAddress(t);
           if (!best || t.split(',').length > best.split(',').length || t.length > best.length) best = t;
         }
         return best;
       }
     ];
     
-    // Try each source until we find the most complete address
+    // Try each source with weights to prefer semantic quality (<address> first)
     const sourceNames = [
-      'address element',
-      'common address containers',
-      'meta tags',
-      'JSON-LD data',
-      'Google Maps links',
-      'address-like text'
+      'address element',                // 0
+      'common address containers',      // 1
+      'meta tags',                      // 2
+      'JSON-LD data',                   // 3
+      'Google Maps links',              // 4
+      'Prime/Location section',         // 5
+      'address-like text'               // 6
     ];
-    
+    const sourceWeight = (idx: number) => {
+      switch (idx) {
+        case 0: return 100; // <address>
+        case 1: return 85;  // containers
+        case 3: return 80;  // JSON-LD
+        case 5: return 75;  // Prime/Location
+        case 4: return 60;  // Maps
+        case 2: return 50;  // meta
+        case 6: return 40;  // regex scan
+        default: return 10;
+      }
+    };
+    let bestScore = 0;
+    let addressLockedFromTag = false;
     for (let i = 0; i < addressSources.length; i++) {
       try {
-        const result = addressSources[i]();
-        console.log(`[NPC Scraper] Trying source '${sourceNames[i]}':`, result || 'No result');
-        
-        if (result && result.length > 10) {
-          // Prefer the longer/more complete address; do not override with a shorter one
-          if (!address_line1 || result.length > address_line1.length) {
-            address_line1 = result;
-            console.log('[NPC Scraper] Selected address:', address_line1);
+        const raw = addressSources[i]();
+        const processed = raw ? postProcessAddress(raw) : null;
+        console.log(`[NPC Scraper] Trying source '${sourceNames[i]}':`, processed || 'No result');
+        if (processed && processed.length > 10) {
+          const candScore = sourceWeight(i) * 100000 + scoreAddr(processed);
+          if (candScore > bestScore) {
+            address_line1 = processed;
+            bestScore = candScore;
+            if (i === 0) addressLockedFromTag = true; // Prefer <address>, prevent later overrides
+            console.log('[NPC Scraper] Selected address:', address_line1, 'score=', candScore);
           }
         }
       } catch (e) {
         console.error(`[NPC Scraper] Error in source '${sourceNames[i]}':`, e);
-        // Continue to next source
       }
     }
     
@@ -490,7 +565,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         }
       }
       if (titleAddr) {
-        const better = scoreAddr(titleAddr) > scoreAddr(address_line1);
+        const better = !addressLockedFromTag && (scoreAddr(titleAddr) > scoreAddr(address_line1));
         if (better) address_line1 = titleAddr;
       } else {
         // Try to parse from body text: For Sale: <title/address remainder>
@@ -516,7 +591,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
           }
         } catch { /* ignore */ }
         if (docAddr) {
-          const better2 = scoreAddr(docAddr) > scoreAddr(address_line1);
+          const better2 = !addressLockedFromTag && (scoreAddr(docAddr) > scoreAddr(address_line1));
           if (better2) address_line1 = docAddr;
         } else {
         // Secondary fallback: parse inline script var address = "...";
@@ -533,7 +608,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
           }
         });
         if (scriptAddr) {
-          const better3 = scoreAddr(scriptAddr) > scoreAddr(address_line1);
+          const better3 = !addressLockedFromTag && (scoreAddr(scriptAddr) > scoreAddr(address_line1));
           if (better3) address_line1 = scriptAddr;
         }
         }
