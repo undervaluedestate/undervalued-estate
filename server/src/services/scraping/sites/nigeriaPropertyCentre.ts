@@ -329,7 +329,9 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       if (neighborhood && /home|for\s*sale/i.test(neighborhood)) neighborhood = null;
     }
 
-    // JSON-LD PostalAddress + geo (after we have city/state/neighborhood)
+    // JSON-LD PostalAddress + geo + publish/modified dates (after we have city/state/neighborhood)
+    let jsonDatePublished: string | null = null;
+    let jsonDateModified: string | null = null;
     try {
       $('script[type="application/ld+json"]').each((_idx: number, el: any) => {
         const txt = $(el).contents().text();
@@ -339,6 +341,9 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
           const walk = (node: any) => {
             if (!node) return;
             if (typeof node === 'object') {
+              // Listing dates
+              if (!jsonDatePublished && typeof node.datePublished === 'string') jsonDatePublished = node.datePublished;
+              if (!jsonDateModified && typeof node.dateModified === 'string') jsonDateModified = node.dateModified;
               const maybeAddr = (node.address && typeof node.address === 'object') ? node.address : (node['@type'] === 'PostalAddress' ? node : null);
               if (maybeAddr) {
                 const street = maybeAddr.streetAddress || maybeAddr.address1 || maybeAddr.addressLine1 || null;
@@ -402,32 +407,50 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       ].map(t => String(t).trim()).filter(Boolean);
       let titleAddr: string | null = null;
       for (const tt of titleCandidates) {
-        // Pattern: For Sale: <something before comma>, <ADDRESS> [| ...] [(Ref: ...)]
-        const m = tt.match(/For\s+(Sale|Rent|Lease)\s*:\s*[^,]+,\s*(.+)$/i);
-        if (m && m[2]) {
-          let rest = m[2];
-          // Cut off anything after a pipe or a Ref suffix
+        // Capture the full remainder after the colon, then clean up
+        const colonIdx = tt.search(/For\s+(Sale|Rent|Lease)\s*:/i);
+        if (colonIdx >= 0) {
+          let rest = tt.slice(colonIdx).replace(/^[^:]*:\s*/i, '');
+          // Cut off known suffixes: pipe, (Ref: ...), and price tails like " - ₦800,000,000" or " - NGN 800,000,000"
           rest = rest.split('|')[0];
           rest = rest.replace(/\s*\(Ref:.*$/i, '');
+          rest = rest.replace(/\s*[-–—]\s*(NGN|USD|GBP|EUR)?\s*[₦$€£]?\s*[0-9.,]+.*$/i, '');
           // Normalize whitespace and trim leading commas
           rest = rest.replace(/\s+/g, ' ').replace(/^\s*,\s*/, '').trim();
           // Remove trailing ", Nigeria"
           rest = rest.replace(/,\s*Nigeria\s*$/i, '').trim();
+          // If the first comma-separated segment looks like a property title, drop it; otherwise keep it
+          const parts = rest.split(',').map(s => s.trim()).filter(Boolean);
+          if (parts.length >= 2) {
+            const first = parts[0].toLowerCase();
+            const looksLikeTitle = /(bed\s*rooms?|bedroom|bath\s*rooms?|bathroom|toilet|sqm|mansion|duplex|apartment|flat|bungalow|land|plot|detached|semi|terrace|storey|storeyed|office|shop|warehouse|luxury|brand\s*new|new|fitted)/i.test(first);
+            if (looksLikeTitle) rest = parts.slice(1).join(', ');
+          }
           if (rest && rest.length >= 3) { titleAddr = rest; break; }
         }
       }
       if (titleAddr) {
         address_line1 = titleAddr;
       } else {
-        // Try to parse from body text: For Sale: <title>, <ADDRESS> | ... (Ref: ...)
+        // Try to parse from body text: For Sale: <title/address remainder>
         let docAddr: string | null = null;
         try {
           const docText = $('body').text();
-          const m2 = docText && docText.match(/For\s+(Sale|Rent|Lease)\s*:\s*[^,]+,\s*([^\n|]+?)(?:\s*\(|\||$)/i);
-          if (m2 && m2[2]) {
-            let s2 = m2[2];
+          const idx = docText.search(/For\s+(Sale|Rent|Lease)\s*:/i);
+          if (idx >= 0) {
+            let s2 = docText.slice(idx).replace(/^[^:]*:\s*/i, '');
+            s2 = s2.split('|')[0];
+            s2 = s2.replace(/\s*\(Ref:.*$/i, '');
+            s2 = s2.replace(/\s*[-–—]\s*(NGN|USD|GBP|EUR)?\s*[₦$€£]?\s*[0-9.,]+.*$/i, '');
             s2 = s2.replace(/\s+/g, ' ').replace(/^\s*,\s*/, '').trim();
             s2 = s2.replace(/,\s*Nigeria\s*$/i, '').trim();
+            // Optional drop of first segment if it's a title-like phrase
+            const parts2 = s2.split(',').map(s => s.trim()).filter(Boolean);
+            if (parts2.length >= 2) {
+              const first2 = parts2[0].toLowerCase();
+              const looksLikeTitle2 = /(bed\s*rooms?|bedroom|bath\s*rooms?|bathroom|toilet|sqm|mansion|duplex|apartment|flat|bungalow|land|plot|detached|semi|terrace|storey|storeyed|office|shop|warehouse|luxury|brand\s*new|new|fitted)/i.test(first2);
+              if (looksLikeTitle2) s2 = parts2.slice(1).join(', ');
+            }
             if (s2 && s2.length >= 3) docAddr = s2;
           }
         } catch { /* ignore */ }
@@ -470,8 +493,30 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     // Size
     const sizeMatch = metaText.match(/([0-9,.]+)\s*(sqm|m2|square\s*meters?)/i) || bodyText.match(/([0-9,.]+)\s*(sqm|m2|square\s*meters?)/i);
 
-    // Listed date (optional)
-    const listedAt = $('time[datetime]').attr('datetime') || pickText($('.date-posted, .listed-date')) || null;
+    // Listed/Updated dates
+    const metaModified = $('meta[itemprop="dateModified"]').attr('content')
+      || $('meta[property="article:modified_time"]').attr('content')
+      || $('time[itemprop="dateModified"]').attr('datetime')
+      || null;
+    // Prefer JSON-LD datePublished/dateModified, else DOM/meta, else text patterns
+    let listedAt = jsonDatePublished || $('time[datetime]').attr('datetime') || pickText($('.date-posted, .listed-date')) || null;
+    let listingUpdatedAt = jsonDateModified || metaModified || null;
+    if (!listedAt) {
+      // Example texts: "Added On: 21 Aug 2025"
+      const addedMatch = bodyText.match(/Added\s*On:\s*([^\n|]+)/i);
+      if (addedMatch && addedMatch[1]) {
+        const d = new Date(addedMatch[1].trim());
+        if (!isNaN(d.getTime())) listedAt = d.toISOString();
+      }
+    }
+    if (!listingUpdatedAt) {
+      // Example texts: "Last Updated: 10 Oct 2025"
+      const updMatch = bodyText.match(/Last\s*Updated:\s*([^\n|]+)/i);
+      if (updMatch && updMatch[1]) {
+        const d = new Date(updMatch[1].trim());
+        if (!isNaN(d.getTime())) listingUpdatedAt = d.toISOString();
+      }
+    }
 
     return {
       external_id,
@@ -495,6 +540,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       latitude,
       longitude,
       listed_at: listedAt,
+      listing_updated_at: listingUpdatedAt || null,
       is_active: true,
       raw: { source: 'NigeriaPropertyCentre', url }
     };

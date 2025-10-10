@@ -58,6 +58,7 @@ export function normalizeToProperty(input: Partial<NormalizedProperty> & { exter
     latitude,
     longitude,
     listed_at,
+    listing_updated_at,
     is_active = true,
     raw,
   } = input as any;
@@ -91,6 +92,7 @@ export function normalizeToProperty(input: Partial<NormalizedProperty> & { exter
     latitude: latitude != null ? Number(latitude) : null,
     longitude: longitude != null ? Number(longitude) : null,
     listed_at: listed_at ?? null,
+    listing_updated_at: listing_updated_at ?? null,
     is_active: !!is_active,
     raw: raw ?? null,
   };

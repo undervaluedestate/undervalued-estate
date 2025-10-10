@@ -109,6 +109,7 @@ create table if not exists public.properties (
   lot_size_sqm numeric(12,2),
 
   listed_at timestamptz,
+  listing_updated_at timestamptz,
   scraped_at timestamptz not null default now(),
   is_active boolean not null default true,
 
@@ -127,6 +128,20 @@ create index if not exists idx_properties_type on public.properties (property_ty
 create index if not exists idx_properties_price on public.properties (price);
 create index if not exists idx_properties_price_per_sqm on public.properties (price_per_sqm);
 create index if not exists idx_properties_scraped_at on public.properties (scraped_at desc);
+create index if not exists idx_properties_listed_at on public.properties (listed_at desc);
+create index if not exists idx_properties_listing_updated_at on public.properties (listing_updated_at desc);
+
+-- If upgrading an existing database, ensure the listing_updated_at column exists
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'properties' and column_name = 'listing_updated_at'
+  ) then
+    alter table public.properties add column listing_updated_at timestamptz;
+    create index if not exists idx_properties_listing_updated_at on public.properties (listing_updated_at desc);
+  end if;
+end$$;
 create index if not exists idx_properties_active on public.properties (is_active);
 create index if not exists idx_properties_geo on public.properties (latitude, longitude);
 create index if not exists idx_properties_raw_gin on public.properties using gin (raw);
@@ -158,6 +173,10 @@ create table if not exists public.benchmarks (
 create index if not exists idx_benchmarks_area on public.benchmarks (country, state, city, neighborhood);
 create index if not exists idx_benchmarks_type on public.benchmarks (property_type);
 create index if not exists idx_benchmarks_computed on public.benchmarks (computed_on desc);
+
+-- Ensure uniqueness per area/type/currency per computation date to avoid duplicates
+create unique index if not exists ux_benchmarks_dim_time
+  on public.benchmarks (country, state, city, neighborhood, property_type, currency, computed_on);
 
 -- =========================
 -- Alerts
@@ -371,7 +390,7 @@ select
   p.property_type,
   p.neighborhood, p.city, p.state, p.country,
   p.bedrooms, p.bathrooms,
-  p.listed_at, p.scraped_at,
+  p.listed_at, p.listing_updated_at, p.scraped_at,
   v.market_avg_price_per_sqm,
   v.pct_vs_market,
   v.deal_class,

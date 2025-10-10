@@ -41,6 +41,7 @@ export interface NormalizedProperty {
   latitude: number | null;
   longitude: number | null;
   listed_at: string | null;
+  listing_updated_at: string | null;
   is_active: boolean;
   raw: any;
 }
