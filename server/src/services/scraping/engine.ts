@@ -3,6 +3,7 @@ import pLimit from 'p-limit';
 import { getAdminClient } from '../../utils/supabase';
 import { getText } from './http';
 import { normalizeToProperty } from './normalize';
+import { canonicalizeUrl } from './url';
 import type { BaseAdapter, ScrapeContext } from '../../types';
 
 interface RunOptions {
@@ -107,13 +108,24 @@ export class ScrapeEngine {
         errors.push(`discover failed for ${meta.name}: ${e.message}`);
         continue;
       }
-      totalDiscovered += urls.length;
+      // Deduplicate discovered URLs by canonical form to avoid redundant fetches
+      const canonicalToUrl = new Map<string, string>();
+      for (const u of urls) {
+        try {
+          const c = canonicalizeUrl(u);
+          if (!canonicalToUrl.has(c)) canonicalToUrl.set(c, u);
+        } catch {
+          if (!canonicalToUrl.has(u)) canonicalToUrl.set(u, u);
+        }
+      }
+      const uniqueUrls = Array.from(canonicalToUrl.values());
+      totalDiscovered += uniqueUrls.length;
 
       // Utility sleep
       const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
       // Fetch + parse + upsert with retry/backoff and optional polite delay for Properstar
-      const tasks = urls.map((url) =>
+      const tasks = uniqueUrls.map((url) =>
         this.limit(async () => {
           // Insert a small delay for Properstar to reduce rate-limits
           if (meta.name === 'Properstar') {
@@ -128,6 +140,11 @@ export class ScrapeEngine {
               if (!rawItem || !rawItem.external_id) return 0;
               const payload: any = normalizeToProperty({ ...rawItem, source });
               if (ctx.extra?.listingType) payload.listing_type = ctx.extra.listingType;
+              // Always bump scraped_at on successful fetch so updates are visible downstream
+              payload.scraped_at = new Date().toISOString();
+              // Track last seen; allow DB default to set first_seen_at only on brand-new inserts
+              payload.last_seen_at = payload.scraped_at;
+              if (payload.first_seen_at == null) delete payload.first_seen_at;
               const { error } = await admin.from('properties').upsert(payload, {
                 onConflict: 'source_id,external_id',
                 ignoreDuplicates: false,

@@ -241,6 +241,8 @@ export class ProperstarAdapter extends BaseAdapter {
         let postal_code = null;
         let latitude = null;
         let longitude = null;
+        let jsonDatePublished = null;
+        let jsonDateModified = null;
         // Microdata and common selectors
         try {
             const streetText = pickText($('[itemprop="streetAddress"], .address, .listing-address, [data-testid="street-address"]'));
@@ -251,7 +253,7 @@ export class ProperstarAdapter extends BaseAdapter {
             }
         }
         catch { /* ignore */ }
-        // JSON-LD scanning for PostalAddress and geo
+        // JSON-LD scanning for PostalAddress, geo, and publish/modified dates
         try {
             $('script[type="application/ld+json"]').each((_, el) => {
                 const txt = $(el).contents().text();
@@ -263,6 +265,10 @@ export class ProperstarAdapter extends BaseAdapter {
                         if (!node)
                             return;
                         if (typeof node === 'object') {
+                            if (!jsonDatePublished && typeof node.datePublished === 'string')
+                                jsonDatePublished = node.datePublished;
+                            if (!jsonDateModified && typeof node.dateModified === 'string')
+                                jsonDateModified = node.dateModified;
                             const maybeAddr = (node.address && typeof node.address === 'object') ? node.address : (node['@type'] === 'PostalAddress' ? node : null);
                             if (maybeAddr) {
                                 const street = maybeAddr.streetAddress || maybeAddr.address1 || maybeAddr.addressLine1 || null;
@@ -306,8 +312,35 @@ export class ProperstarAdapter extends BaseAdapter {
         const bathMatch = metaText.match(/(\d+)\s*(bath|bathroom)s?/i);
         // Size
         const sizeMatch = metaText.match(/([0-9,.]+)\s*(sqm|m2|square\s*meters?)/i);
-        // Listed date (optional)
-        const listedAt = $('time[datetime]').attr('datetime') || null;
+        // Listed/Updated dates (prefer JSON-LD, then meta/time tags, then text patterns)
+        const metaPublished = $('meta[itemprop="datePublished"]').attr('content')
+            || $('meta[property="article:published_time"]').attr('content')
+            || $('time[itemprop="datePublished"]').attr('datetime')
+            || null;
+        const metaModified = $('meta[itemprop="dateModified"]').attr('content')
+            || $('meta[property="article:modified_time"]').attr('content')
+            || $('time[itemprop="dateModified"]').attr('datetime')
+            || null;
+        let listedAt = jsonDatePublished || metaPublished || $('time[datetime]').attr('datetime') || null;
+        let listingUpdatedAt = jsonDateModified || metaModified || null;
+        if (!listedAt) {
+            const text = $('body').text();
+            const addM = text.match(/(Added\s*On|Published\s*On|Listed\s*On)\s*:?\s*([^\n|]+)/i);
+            if (addM && addM[2]) {
+                const d = new Date(addM[2].trim());
+                if (!isNaN(d.getTime()))
+                    listedAt = d.toISOString();
+            }
+        }
+        if (!listingUpdatedAt) {
+            const text = $('body').text();
+            const updM = text.match(/(Last\s*Updated|Updated\s*On)\s*:?\s*([^\n|]+)/i);
+            if (updM && updM[2]) {
+                const d = new Date(updM[2].trim());
+                if (!isNaN(d.getTime()))
+                    listingUpdatedAt = d.toISOString();
+            }
+        }
         // Currency normalization for Nigeria: convert GBP -> NGN using FX rate
         if (country === 'Nigeria' && currency === 'GBP' && typeof priceNum === 'number') {
             try {
@@ -337,6 +370,7 @@ export class ProperstarAdapter extends BaseAdapter {
             latitude,
             longitude,
             listed_at: listedAt,
+            listing_updated_at: listingUpdatedAt || null,
             is_active: true,
             raw: { url },
         };

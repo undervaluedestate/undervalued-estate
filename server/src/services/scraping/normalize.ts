@@ -1,4 +1,5 @@
 import type { NormalizedProperty, PropertyType } from '../../types/index.js';
+import { canonicalizeUrl } from './url';
 
 function toNumberSafe(v: any): number | null {
   if (v == null) return null;
@@ -59,6 +60,8 @@ export function normalizeToProperty(input: Partial<NormalizedProperty> & { exter
     longitude,
     listed_at,
     listing_updated_at,
+    first_seen_at,
+    last_seen_at,
     is_active = true,
     raw,
   } = input as any;
@@ -74,6 +77,7 @@ export function normalizeToProperty(input: Partial<NormalizedProperty> & { exter
     source_id: source?.id,
     external_id,
     url,
+    url_canonical: canonicalizeUrl(url),
     title: title ?? null,
     description: description ?? null,
     price: toNumberSafe(price) ?? 0,
@@ -93,6 +97,8 @@ export function normalizeToProperty(input: Partial<NormalizedProperty> & { exter
     longitude: longitude != null ? Number(longitude) : null,
     listed_at: listed_at ?? null,
     listing_updated_at: listing_updated_at ?? null,
+    first_seen_at: first_seen_at ?? null,
+    last_seen_at: last_seen_at ?? null,
     is_active: !!is_active,
     raw: raw ?? null,
   };

@@ -1,3 +1,4 @@
+import { canonicalizeUrl } from './url';
 function toNumberSafe(v) {
     if (v == null)
         return null;
@@ -42,7 +43,7 @@ function mapPropertyType(t) {
     return 'other';
 }
 export function normalizeToProperty(input) {
-    const { source, external_id, url, title, description, price, currency, size_sqm, size, bedrooms, bathrooms, property_type, address_line1, address_line2, neighborhood, city, state, postal_code, country, latitude, longitude, listed_at, is_active = true, raw, } = input;
+    const { source, external_id, url, title, description, price, currency, size_sqm, size, bedrooms, bathrooms, property_type, address_line1, address_line2, neighborhood, city, state, postal_code, country, latitude, longitude, listed_at, listing_updated_at, first_seen_at, last_seen_at, is_active = true, raw, } = input;
     // Compose a fallback address when a scraper doesn't provide a street/estate.
     // This favors completeness: address_line1 may include neighborhood/city/state/postal_code/country.
     const composedAddress = address_line1 ?? (() => {
@@ -53,6 +54,7 @@ export function normalizeToProperty(input) {
         source_id: source?.id,
         external_id,
         url,
+        url_canonical: canonicalizeUrl(url),
         title: title ?? null,
         description: description ?? null,
         price: toNumberSafe(price) ?? 0,
@@ -71,6 +73,9 @@ export function normalizeToProperty(input) {
         latitude: latitude != null ? Number(latitude) : null,
         longitude: longitude != null ? Number(longitude) : null,
         listed_at: listed_at ?? null,
+        listing_updated_at: listing_updated_at ?? null,
+        first_seen_at: first_seen_at ?? null,
+        last_seen_at: last_seen_at ?? null,
         is_active: !!is_active,
         raw: raw ?? null,
     };

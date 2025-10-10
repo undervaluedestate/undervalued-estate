@@ -23,6 +23,7 @@ export interface NormalizedProperty {
   source_id: UUID | undefined;
   external_id: string;
   url: string;
+  url_canonical: string | null;
   title: string | null;
   description: string | null;
   price: number;
@@ -42,6 +43,8 @@ export interface NormalizedProperty {
   longitude: number | null;
   listed_at: string | null;
   listing_updated_at: string | null;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
   is_active: boolean;
   raw: any;
 }

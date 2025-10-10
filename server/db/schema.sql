@@ -14,6 +14,31 @@ begin
   end if;
 end$$;
 
+-- If upgrading an existing database, ensure url_canonical/first_seen_at/last_seen_at exist
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'properties' and column_name = 'url_canonical'
+  ) then
+    alter table public.properties add column url_canonical text;
+    create index if not exists idx_properties_url_canonical on public.properties (url_canonical);
+  end if;
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'properties' and column_name = 'first_seen_at'
+  ) then
+    alter table public.properties add column first_seen_at timestamptz not null default now();
+  end if;
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'properties' and column_name = 'last_seen_at'
+  ) then
+    alter table public.properties add column last_seen_at timestamptz;
+    create index if not exists idx_properties_last_seen_at on public.properties (last_seen_at desc);
+  end if;
+end$$;
+
 -- =========================
 -- Rent Benchmarks (Materialized View)
 -- =========================
@@ -84,10 +109,11 @@ create table if not exists public.properties (
   source_id uuid not null references public.sources(id) on delete restrict,
   external_id text not null,
   url text not null,
+  url_canonical text,
 
   title text,
   description text,
-  price numeric(12,2) not null,
+  price numeric(16,2) not null,
   currency text not null default 'NGN',
   size_sqm numeric(10,2),
   bedrooms int,
@@ -110,6 +136,8 @@ create table if not exists public.properties (
 
   listed_at timestamptz,
   listing_updated_at timestamptz,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz,
   scraped_at timestamptz not null default now(),
   is_active boolean not null default true,
 
@@ -117,7 +145,7 @@ create table if not exists public.properties (
 
   listing_type property_listing_type_enum not null default 'buy',
 
-  price_per_sqm numeric(12,2) generated always as
+  price_per_sqm numeric(18,2) generated always as
     (case when size_sqm is not null and size_sqm > 0 then round(price / size_sqm, 2) end) stored,
 
   unique (source_id, external_id)
@@ -130,6 +158,8 @@ create index if not exists idx_properties_price_per_sqm on public.properties (pr
 create index if not exists idx_properties_scraped_at on public.properties (scraped_at desc);
 create index if not exists idx_properties_listed_at on public.properties (listed_at desc);
 create index if not exists idx_properties_listing_updated_at on public.properties (listing_updated_at desc);
+create index if not exists idx_properties_url_canonical on public.properties (url_canonical);
+create index if not exists idx_properties_last_seen_at on public.properties (last_seen_at desc);
 
 -- If upgrading an existing database, ensure the listing_updated_at column exists
 do $$
@@ -145,6 +175,29 @@ end$$;
 create index if not exists idx_properties_active on public.properties (is_active);
 create index if not exists idx_properties_geo on public.properties (latitude, longitude);
 create index if not exists idx_properties_raw_gin on public.properties using gin (raw);
+
+-- If upgrading an existing database, widen numeric precision to avoid overflows
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'properties' and column_name = 'price'
+  ) then
+    begin
+      alter table public.properties alter column price type numeric(16,2);
+    exception when others then null; -- ignore if already wider
+    end;
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'properties' and column_name = 'price_per_sqm'
+  ) then
+    begin
+      alter table public.properties alter column price_per_sqm type numeric(18,2);
+    exception when others then null; -- ignore if already wider
+    end;
+  end if;
+end$$;
 
 -- =========================
 -- Benchmarks
@@ -383,6 +436,7 @@ select
   p.id,
   p.url,
   p.title,
+  p.address_line1,
   p.price,
   p.currency,
   p.size_sqm,
