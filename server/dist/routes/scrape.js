@@ -118,6 +118,7 @@ router.post('/seed', requireApiSecret(), async (req, res) => {
         }
         let upserted = 0;
         const errors = [];
+        const results = [];
         for (const url of urls) {
             try {
                 const html = await getText(url, 12000);
@@ -128,16 +129,34 @@ router.post('/seed', requireApiSecret(), async (req, res) => {
                 // parse -> normalize -> upsert
                 const rawItem = await adapter.parseListing(ctx, html, url);
                 const payload = normalizeToProperty({ ...rawItem, source });
+                // Mirror engine behavior: always bump scraped_at/last_seen_at; let DB set first_seen_at on new inserts
+                payload.scraped_at = new Date().toISOString();
+                payload.last_seen_at = payload.scraped_at;
+                if (payload.first_seen_at == null)
+                    delete payload.first_seen_at;
                 const { error } = await supa.from('properties').upsert(payload, { onConflict: 'source_id,external_id', ignoreDuplicates: false });
                 if (error)
                     throw error;
+                results.push({
+                    url,
+                    external_id: payload.external_id,
+                    address_line1: payload.address_line1,
+                    neighborhood: payload.neighborhood,
+                    city: payload.city,
+                    state: payload.state,
+                    listed_at: payload.listed_at,
+                    listing_updated_at: payload.listing_updated_at,
+                    price: payload.price,
+                    currency: payload.currency,
+                    property_type: payload.property_type,
+                });
                 upserted++;
             }
             catch (e) {
                 errors.push(`${url}: ${e.message || 'parse/upsert failed'}`);
             }
         }
-        res.json({ status: 'ok', upserted, errors });
+        res.json({ status: 'ok', upserted, results, errors });
     }
     catch (err) {
         // eslint-disable-next-line no-console

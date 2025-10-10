@@ -74,6 +74,13 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
   async parseListing(ctx: ScrapeContext, html: string, url: string) {
     // Load the HTML with Cheerio
     const $ = cheerio.load(html);
+
+    // Helper to compare address completeness safely
+    const scoreAddr = (s?: string | null): number => {
+      if (!s) return 0;
+      const parts = String(s).split(',').length;
+      return parts * 1000 + String(s).length;
+    };
     
     // Debug: Log the URL being processed
     console.log(`\n===== NPC Scraper Debug =====`);
@@ -218,16 +225,26 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         return null;
       },
       
-      // 6. Look for any element with address-like text
+      // 6. Look for any element with address-like text (regex-based, case-insensitive)
       () => {
-        const candidates = $('*:contains("road"), *:contains("street"), *:contains("avenue"), *:contains("close"), *:contains("drive"), *:contains("way"), *:contains("estate"), *:contains("villa"), *:contains("house"), *:contains("apartment"), *:contains("flat")');
-        for (let i = 0; i < Math.min(candidates.length, 20); i++) {
-          const text = $(candidates[i]).text().trim();
-          if (text.length > 10 && /\d/.test(text) && /[a-z]/i.test(text)) {
-            return text.replace(/[\s\n]+/g, ' ').trim();
+        const addrRe = /\b(road|street|avenue|close|drive|way|estate|villa|house|apartment|flat|junction|crescent|highway|boulevard|phase|quarter|quaters|quarters|off\s+[a-z])/i;
+        const blocks = $('p, li, .description, .property-description, .details, .key-details, .property-details, .body, .content').toArray();
+        let best: string | null = null;
+        for (let i = 0; i < Math.min(blocks.length, 200); i++) {
+          let t = $(blocks[i]).text().replace(/[\s\n]+/g, ' ').trim();
+          if (!t || t.length < 12) continue;
+          if (!addrRe.test(t)) continue;
+          // Split on line/period if present and pick the sub-segment with most commas
+          const segs = t.split(/\.|\n|\r/).map(s => s.trim()).filter(Boolean);
+          if (segs.length > 1) {
+            segs.sort((a, b) => (b.split(',').length - a.split(',').length) || (b.length - a.length));
+            t = segs[0];
           }
+          // Trim obvious tails
+          t = t.replace(/\s*\(Ref:.*$/i, '').replace(/\s*\|.*$/, '').trim();
+          if (!best || t.split(',').length > best.split(',').length || t.length > best.length) best = t;
         }
-        return null;
+        return best;
       }
     ];
     
@@ -294,6 +311,49 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
           }
         }
       }
+    }
+
+    // Parse tables and definition lists for Address/Location labels
+    if (!address_line1) {
+      $('table tr').each((_i, tr) => {
+        const cells = $(tr).find('th,td');
+        if (cells.length < 2) return;
+        const label = cells.first().text().trim().toLowerCase();
+        const value = cells.slice(1).text().replace(/[\s\n]+/g, ' ').trim();
+        if (!value) return;
+        if (label.includes('address') || label.includes('location')) {
+          if (!address_line1 || value.length > address_line1.length) address_line1 = value;
+        }
+      });
+      if (!address_line1) {
+        $('dl').each((_i, dl) => {
+          const dts = $(dl).find('dt');
+          const dds = $(dl).find('dd');
+          dts.each((idx, dt) => {
+            const label = $(dt).text().trim().toLowerCase();
+            const value = $(dds.get(idx)).text().replace(/[\s\n]+/g, ' ').trim();
+            if (!value) return;
+            if (label.includes('address') || label.includes('location')) {
+              if (!address_line1 || value.length > address_line1.length) address_line1 = value;
+            }
+          });
+        });
+      }
+    }
+
+    // As a final labeled-text fallback, scan body text for 'Address:' or 'Location:'
+    if (!address_line1) {
+      try {
+        const fullText = $('body').text();
+        const m1 = fullText.match(/Address\s*:\s*([^\n|]+)/i);
+        const m2 = fullText.match(/Location\s*:\s*([^\n|]+)/i);
+        const cand = (m1 && m1[1]) || (m2 && m2[1]) || '';
+        if (cand && cand.trim().length > 5) {
+          let s = cand.replace(/[\s\n]+/g, ' ').trim();
+          s = s.replace(/\s*\(Ref:.*$/i, '').replace(/\s*\|.*$/, '').trim();
+          if (!address_line1 || s.length > address_line1.length) address_line1 = s;
+        }
+      } catch { /* ignore */ }
     }
 
     // Price selectors
@@ -430,7 +490,8 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         }
       }
       if (titleAddr) {
-        address_line1 = titleAddr;
+        const better = scoreAddr(titleAddr) > scoreAddr(address_line1);
+        if (better) address_line1 = titleAddr;
       } else {
         // Try to parse from body text: For Sale: <title/address remainder>
         let docAddr: string | null = null;
@@ -455,7 +516,8 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
           }
         } catch { /* ignore */ }
         if (docAddr) {
-          address_line1 = docAddr;
+          const better2 = scoreAddr(docAddr) > scoreAddr(address_line1);
+          if (better2) address_line1 = docAddr;
         } else {
         // Secondary fallback: parse inline script var address = "...";
         let scriptAddr: string | null = null;
@@ -470,7 +532,10 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
             if (s && s.length >= 3) scriptAddr = s;
           }
         });
-        if (scriptAddr) address_line1 = scriptAddr;
+        if (scriptAddr) {
+          const better3 = scoreAddr(scriptAddr) > scoreAddr(address_line1);
+          if (better3) address_line1 = scriptAddr;
+        }
         }
       }
     } catch { /* ignore */ }
