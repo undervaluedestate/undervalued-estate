@@ -72,7 +72,13 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
   }
 
   async parseListing(ctx: ScrapeContext, html: string, url: string) {
-    const $ = ctx.cheerio.load(html);
+    // Load the HTML with Cheerio
+    const $ = cheerio.load(html);
+    
+    // Debug: Log the URL being processed
+    console.log(`\n===== NPC Scraper Debug =====`);
+    console.log(`[1/4] Starting parse for URL: ${url}`);
+    console.log(`[2/4] Page title: ${$('title').text().trim() || 'No title found'}`);
     // Listing type from URL path
     let listing_type: 'buy' | 'rent' = 'buy';
     try {
@@ -92,39 +98,170 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     let latitude: number | null = null;
     let longitude: number | null = null;
     
-    // First try: <address> element (common pattern in NPC)
-    // Capture ALL content including icons, text nodes, and nested elements
-    const addressEl = $('address').first();
-    if (addressEl.length) {
-      // Get all text nodes including those in nested elements
-      const textNodes: string[] = [];
+    // Enhanced debug logging
+    console.log('\n===== NPC Scraper Debug =====');
+    console.log(`[1/4] Starting scrape for URL: ${url}`);
+    console.log(`[2/4] Page title: ${$('title').text().trim() || 'No title found'}`);
+    
+    // Log the first 1000 characters of the page for debugging
+    const pageContent = $.html() || '';
+    console.log(`[3/4] Page content sample: ${pageContent.substring(0, 500)}...`);
+    
+    // Log all address elements found with proper TypeScript types
+    const addressElements = $('address, [class*="address"], [class*="location"], [id*="address"], [id*="location"]');
+    console.log(`[4/4] Found ${addressElements.length} potential address elements`);
+    
+    // Process address elements with proper typing
+    addressElements.each((index: number, element: any) => {
+      const text = $(element).text().trim();
+      console.log(`  - Element ${index + 1} (${element.tagName}${element.attribs?.class ? '.' + element.attribs.class.split(' ').join('.') : ''}): ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
       
-      // Process all text nodes in the address element
-      addressEl.contents().each((index: number, node: any) => {
-        if (node.type === 'text') {
-          textNodes.push($(node).text().trim());
-        } else if (node.type === 'tag' && node.name === 'i') {
-          // Include icon elements (like fa-map-marker) as text
-          textNodes.push($(node).text().trim());
-        } else if (node.type === 'tag') {
-          // For other elements, include their text content
-          textNodes.push($(node).text().trim());
+      // If this looks like a good address, use it as a fallback
+      if (text.length > 10 && !address_line1 && /[a-z]/i.test(text)) {
+        console.log(`  - Using as potential address: ${text}`);
+        address_line1 = text;
+      }
+    });
+    
+    // Try multiple strategies to get the most complete address
+    const addressSources = [
+      // 1. Check for <address> element first (common pattern)
+      () => {
+        const el = $('address').first();
+        if (el.length) {
+          // Get all text content including nested elements
+          return el.text()
+            .replace(/\s+/g, ' ')
+            .replace(/[\n\t]/g, ' ')
+            .trim();
         }
-      });
+        return null;
+      },
       
-      // Join all text parts with spaces and clean up
-      const fullText = textNodes
-        .filter(Boolean)  // Remove empty strings
-        .join(' ')        // Join with single spaces
-        .replace(/[\s\n]+/g, ' ')  // Normalize whitespace
-        .trim();
+      // 2. Look for common address containers
+      () => {
+        const selectors = [
+          '.property-address', 
+          '.address', 
+          '.location',
+          '.property-location',
+          '.property-address',
+          '.property-address-full',
+          '.address-container',
+          '.property-address-container',
+          '.property-address-full',
+          '.property-address-line',
+          '.address-line',
+          '.property-location-address',
+          '.location-address',
+          '.property-address-text',
+          '.address-text',
+          '.property-full-address'
+        ];
+        
+        for (const sel of selectors) {
+          const text = $(sel).first().text().trim();
+          if (text && text.length > 5) return text;
+        }
+        return null;
+      },
       
-      if (fullText) {
-        address_line1 = fullText;
+      // 3. Look for meta tags with address info
+      () => {
+        const metaAddress = $('meta[property="og:description"], meta[property="description"], meta[name="description"]')
+          .first()
+          .attr('content');
+          
+        if (metaAddress && /(road|street|avenue|close|drive|way|estate|villa|house|apartment|flat)/i.test(metaAddress)) {
+          return metaAddress;
+        }
+        return null;
+      },
+      
+      // 4. Look for JSON-LD data
+      () => {
+        try {
+          const jsonLd = $('script[type="application/ld+json"]').first().html();
+          if (jsonLd) {
+            const data = JSON.parse(jsonLd);
+            if (data.streetAddress || data.address?.streetAddress) {
+              return [
+                data.streetAddress || data.address.streetAddress,
+                data.addressLocality || data.address?.addressLocality,
+                data.addressRegion || data.address?.addressRegion,
+                data.postalCode || data.address?.postalCode
+              ].filter(Boolean).join(', ');
+            }
+          }
+        } catch {}
+        return null;
+      },
+      
+      // 5. Look for Google Maps iframe/links
+      () => {
+        const mapLink = $('a[href*="google.com/maps"], a[href*="goo.gl/maps"], iframe[src*="google.com/maps"]').first();
+        const href = mapLink.attr('href') || mapLink.attr('src') || '';
+        if (href) {
+          try {
+            const url = new URL(href);
+            const q = url.searchParams.get('q');
+            if (q) return q;
+            
+            // Try to extract from path segments
+            const pathSegs = url.pathname.split('/').filter(Boolean);
+            const placeIdx = pathSegs.indexOf('place');
+            if (placeIdx >= 0 && pathSegs[placeIdx + 1]) {
+              return decodeURIComponent(pathSegs[placeIdx + 1].replace(/\+/g, ' '));
+            }
+          } catch {}
+        }
+        return null;
+      },
+      
+      // 6. Look for any element with address-like text
+      () => {
+        const candidates = $('*:contains("road"), *:contains("street"), *:contains("avenue"), *:contains("close"), *:contains("drive"), *:contains("way"), *:contains("estate"), *:contains("villa"), *:contains("house"), *:contains("apartment"), *:contains("flat")');
+        for (let i = 0; i < Math.min(candidates.length, 20); i++) {
+          const text = $(candidates[i]).text().trim();
+          if (text.length > 10 && /\d/.test(text) && /[a-z]/i.test(text)) {
+            return text.replace(/[\s\n]+/g, ' ').trim();
+          }
+        }
+        return null;
+      }
+    ];
+    
+    // Try each source until we find a good address
+    const sourceNames = [
+      'address element',
+      'common address containers',
+      'meta tags',
+      'JSON-LD data',
+      'Google Maps links',
+      'address-like text'
+    ];
+    
+    for (let i = 0; i < addressSources.length; i++) {
+      try {
+        const result = addressSources[i]();
+        console.log(`[NPC Scraper] Trying source '${sourceNames[i]}':`, result || 'No result');
+        
+        if (result && result.length > 10) {
+          address_line1 = result;
+          console.log('[NPC Scraper] Selected address:', address_line1);
+          break;
+        }
+      } catch (e) {
+        console.error(`[NPC Scraper] Error in source '${sourceNames[i]}':`, e);
+        // Continue to next source
       }
     }
     
-    // Then try common selectors
+    if (!address_line1) {
+      console.warn('[NPC Scraper] No valid address found using any method');
+    }
+    
+    // Then try common selectors as fallback
     const addrCandidates = [
       '.address',
       '.property-address',
