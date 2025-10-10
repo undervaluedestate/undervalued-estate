@@ -393,6 +393,65 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       if (parts.length) address_line1 = parts.join(', ');
     }
 
+    // Preferred override: extract address directly after "For Sale:" (or Rent/Lease) from page title/meta
+    try {
+      const titleCandidates = [
+        $('meta[property="og:title"]').attr('content') || '',
+        $('title').text() || '',
+        $('h1').first().text() || ''
+      ].map(t => String(t).trim()).filter(Boolean);
+      let titleAddr: string | null = null;
+      for (const tt of titleCandidates) {
+        // Pattern: For Sale: <something before comma>, <ADDRESS> [| ...] [(Ref: ...)]
+        const m = tt.match(/For\s+(Sale|Rent|Lease)\s*:\s*[^,]+,\s*(.+)$/i);
+        if (m && m[2]) {
+          let rest = m[2];
+          // Cut off anything after a pipe or a Ref suffix
+          rest = rest.split('|')[0];
+          rest = rest.replace(/\s*\(Ref:.*$/i, '');
+          // Normalize whitespace and trim leading commas
+          rest = rest.replace(/\s+/g, ' ').replace(/^\s*,\s*/, '').trim();
+          // Remove trailing ", Nigeria"
+          rest = rest.replace(/,\s*Nigeria\s*$/i, '').trim();
+          if (rest && rest.length >= 3) { titleAddr = rest; break; }
+        }
+      }
+      if (titleAddr) {
+        address_line1 = titleAddr;
+      } else {
+        // Try to parse from body text: For Sale: <title>, <ADDRESS> | ... (Ref: ...)
+        let docAddr: string | null = null;
+        try {
+          const docText = $('body').text();
+          const m2 = docText && docText.match(/For\s+(Sale|Rent|Lease)\s*:\s*[^,]+,\s*([^\n|]+?)(?:\s*\(|\||$)/i);
+          if (m2 && m2[2]) {
+            let s2 = m2[2];
+            s2 = s2.replace(/\s+/g, ' ').replace(/^\s*,\s*/, '').trim();
+            s2 = s2.replace(/,\s*Nigeria\s*$/i, '').trim();
+            if (s2 && s2.length >= 3) docAddr = s2;
+          }
+        } catch { /* ignore */ }
+        if (docAddr) {
+          address_line1 = docAddr;
+        } else {
+        // Secondary fallback: parse inline script var address = "...";
+        let scriptAddr: string | null = null;
+        $('script').each((_i: number, el: any) => {
+          const txt = $(el).contents().text();
+          const mm = txt && txt.match(/\bvar\s+address\s*=\s*["']([^"']+)["']/i);
+          if (mm && mm[1] && !scriptAddr) {
+            let s = mm[1];
+            s = s.replace(/^\s*,\s*/, '');
+            s = s.replace(/,\s*Nigeria\s*$/i, '');
+            s = s.replace(/\s+/g, ' ').trim();
+            if (s && s.length >= 3) scriptAddr = s;
+          }
+        });
+        if (scriptAddr) address_line1 = scriptAddr;
+        }
+      }
+    } catch { /* ignore */ }
+
     // Fallback: if we still lack a street/estate, compose a full address from available parts
     if (!address_line1) {
       const parts = [neighborhood, city, state, 'Nigeria'].filter(Boolean).map((s: any) => String(s).trim());
