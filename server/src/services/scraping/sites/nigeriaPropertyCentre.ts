@@ -94,6 +94,8 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       }
       // Normalize whitespace
       s = s.replace(/[\s\n]+/g, ' ').replace(/\u00a0|&nbsp;/g, ' ').trim();
+      // Remove accidental site phrases
+      s = s.replace(/\bthis website\b/gi, '').replace(/\s{2,}/g, ' ').trim();
       // Cut at promo keywords if they appear inside the candidate
       const stopRe = /(Delivery\s*Date|Exclusive\b|Apartment\s*Highlights|Luxury\b|A\s*Premium\b|Facilities\b|Features\b|Fully\s+Equipped|Generator\b|Gym\b|Parking\b|Bedrooms?\b|\b\d+\s*sqm)/i;
       const pos = s.search(stopRe);
@@ -104,7 +106,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         // Prepend an "Off <road>" phrase if present in page and not already in s
         try {
           const full = $('body').text();
-          const offNear = full.match(/\boff\s+[A-Za-z][^,|;.]{2,60}/i);
+          const offNear = full.match(/\boff\s+(?!this\b)[A-Za-z][^,|;.]{2,60}/i);
           if (offNear && !/\boff\s/i.test(s)) {
             const offStr = offNear[0].replace(/[\s\n]+/g, ' ').trim();
             s = `${offStr}, ${s}`;
@@ -180,12 +182,13 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     const addressSources = [
       // 1. Check for <address> element first (common pattern)
       () => {
-        const el = $('address').first();
+        const el = $('.property-details address, address').first();
         if (el.length) {
           // Get all text content including nested elements
           return el.text()
             .replace(/\s+/g, ' ')
             .replace(/[\n\t]/g, ' ')
+            .replace(/\u00a0|&nbsp;/g, ' ')
             .trim();
         }
         return null;
@@ -353,30 +356,31 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       }
     }
     
-    if (!address_line1) {
+    if (!address_line1 && !addressLockedFromTag) {
       console.warn('[NPC Scraper] No valid address found using any method');
     }
     
     // Then try common selectors as fallback
-    const addrCandidates = [
+    if (!addressLockedFromTag) {
+      const addrCandidates = [
       '.address',
       '.property-address',
       'span[itemprop="streetAddress"]',
       '.property-details .value:contains("Estate"), .property-details .value:contains("Address")',
       '.breadcrumb li:nth-last-child(3) a',
-    ];
-    for (const sel of addrCandidates) {
-      const t = pickText($(sel));
-      // Accept address text even if it contains city/state (user prefers completeness over cleanliness)
-      if (t && t.length >= 3) {
-        if (!address_line1 || t.length > address_line1.length) {
-          address_line1 = t;
+      ];
+      for (const sel of addrCandidates) {
+        const t = pickText($(sel));
+        if (t && t.length >= 3) {
+          if (!address_line1 || t.length > address_line1.length) {
+            address_line1 = t;
+          }
         }
       }
     }
 
     // Try to read Address from common detail rows: name/value list items
-    if (!address_line1) {
+    if (!address_line1 && !addressLockedFromTag) {
       const detailRows = $('.property-details li, .details li, .key-details li, .facts li').toArray();
       for (const li of detailRows) {
         const name = $(li).find('.name, .label, .title').text().trim().toLowerCase();
@@ -391,7 +395,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     }
 
     // Parse tables and definition lists for Address/Location labels
-    if (!address_line1) {
+    if (!address_line1 && !addressLockedFromTag) {
       $('table tr').each((_i, tr) => {
         const cells = $(tr).find('th,td');
         if (cells.length < 2) return;
@@ -419,7 +423,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     }
 
     // As a final labeled-text fallback, scan body text for 'Address:' or 'Location:'
-    if (!address_line1) {
+    if (!address_line1 && !addressLockedFromTag) {
       try {
         const fullText = $('body').text();
         const m1 = fullText.match(/Address\s*:\s*([^\n|]+)/i);
