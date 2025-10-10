@@ -633,27 +633,81 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     // Size
     const sizeMatch = metaText.match(/([0-9,.]+)\s*(sqm|m2|square\s*meters?)/i) || bodyText.match(/([0-9,.]+)\s*(sqm|m2|square\s*meters?)/i);
 
-    // Listed/Updated dates
+    // Listed/Updated dates (robust)
+    // Helper: read labelled values from table cells like "<strong>Added On:</strong> 26 Dec 2024"
+    const readLabeledFromTables = (labels: string[]): string | null => {
+      let found: string | null = null;
+      $('table tr td').each((_i, td) => {
+        if (found) return;
+        const strong = $(td).find('strong').first();
+        const lab = strong.text().trim().replace(/:$/, '');
+        if (!lab) return;
+        for (const want of labels) {
+          if (new RegExp(`^${want}$`, 'i').test(lab)) {
+            // Value is the td text without the strong label
+            const value = $(td).clone().find('strong').remove().end().text().replace(/\s+/g, ' ').trim().replace(/^:\s*/, '');
+            if (value) { found = value; }
+            break;
+          }
+        }
+      });
+      return found;
+    };
+    const metaPublished = $('meta[itemprop="datePublished"]').attr('content')
+      || $('meta[property="article:published_time"]').attr('content')
+      || $('meta[name="date"]').attr('content')
+      || $('time[itemprop="datePublished"]').attr('datetime')
+      || null;
     const metaModified = $('meta[itemprop="dateModified"]').attr('content')
       || $('meta[property="article:modified_time"]').attr('content')
+      || $('meta[name="last-modified"]').attr('content')
       || $('time[itemprop="dateModified"]').attr('datetime')
       || null;
-    // Prefer JSON-LD datePublished/dateModified, else DOM/meta, else text patterns
-    let listedAt = jsonDatePublished || $('time[datetime]').attr('datetime') || pickText($('.date-posted, .listed-date')) || null;
+    // Prefer JSON-LD, then meta/time, then visible text patterns
+    let listedAt = jsonDatePublished
+      || metaPublished
+      || $('time[datetime]').first().attr('datetime')
+      || null;
     let listingUpdatedAt = jsonDateModified || metaModified || null;
+    // Table-labelled dates (higher confidence than arbitrary body text)
     if (!listedAt) {
-      // Example texts: "Added On: 21 Aug 2025"
-      const addedMatch = bodyText.match(/Added\s*On:\s*([^\n|]+)/i);
-      if (addedMatch && addedMatch[1]) {
-        const d = new Date(addedMatch[1].trim());
+      const tVal = readLabeledFromTables(['Added On', 'Date Added', 'Added']);
+      if (tVal) {
+        const d = new Date(tVal);
         if (!isNaN(d.getTime())) listedAt = d.toISOString();
       }
     }
     if (!listingUpdatedAt) {
-      // Example texts: "Last Updated: 10 Oct 2025"
-      const updMatch = bodyText.match(/Last\s*Updated:\s*([^\n|]+)/i);
-      if (updMatch && updMatch[1]) {
-        const d = new Date(updMatch[1].trim());
+      const uVal = readLabeledFromTables(['Last Updated', 'Updated On', 'Modified On']);
+      if (uVal) {
+        const d = new Date(uVal);
+        if (!isNaN(d.getTime())) listingUpdatedAt = d.toISOString();
+      }
+    }
+    // Expand text-based extraction for listedAt
+    if (!listedAt) {
+      // Try visible date containers first
+      const dateSelText = pickText($('.date-posted, .listed-date, .date, .post-date, .added-on, .added, .meta-date'));
+      if (dateSelText) {
+        const m = dateSelText.match(/(\d{1,2}\s*[A-Za-z]{3,9}\s*\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})/);
+        if (m && m[0]) {
+          const d = new Date(m[0]);
+          if (!isNaN(d.getTime())) listedAt = d.toISOString();
+        }
+      }
+      if (!listedAt) {
+        const m = bodyText.match(/(?:Added|Date\s*Added|Posted|Posted\s*On|Published\s*On|Listed\s*On)\s*:??\s*([^\n|]+)/i);
+        if (m && m[1]) {
+          const d = new Date(m[1].trim());
+          if (!isNaN(d.getTime())) listedAt = d.toISOString();
+        }
+      }
+    }
+    // Expand text-based extraction for listingUpdatedAt
+    if (!listingUpdatedAt) {
+      const upd = bodyText.match(/(?:Last\s*Updated|Updated\s*On|Modified\s*On)\s*:??\s*([^\n|]+)/i);
+      if (upd && upd[1]) {
+        const d = new Date(upd[1].trim());
         if (!isNaN(d.getTime())) listingUpdatedAt = d.toISOString();
       }
     }

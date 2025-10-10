@@ -79,6 +79,56 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
             const parts = String(s).split(',').length;
             return parts * 1000 + String(s).length;
         };
+        // Helper to trim promos, labels and enrich with nearby cues and breadcrumb
+        const postProcessAddress = (raw) => {
+            if (!raw)
+                return raw;
+            let s = String(raw);
+            // Remove label prefixes
+            s = s.replace(/^\s*(Prime\s*Location|Location)\s*:\s*/i, '');
+            // If label occurs later in the string, keep only the portion after it
+            if (/\b(Prime\s*Location|Location)\s*:/i.test(s)) {
+                s = s.replace(/^[\s\S]*?\b(Prime\s*Location|Location)\s*:\s*/i, '');
+            }
+            // Normalize whitespace
+            s = s.replace(/[\s\n]+/g, ' ').trim();
+            // Cut at promo keywords if they appear inside the candidate
+            const stopRe = /(Delivery\s*Date|Exclusive\b|Apartment\s*Highlights|Luxury\b|A\s*Premium\b|Facilities\b|Features\b|Fully\s+Equipped|Generator\b|Gym\b|Parking\b|Bedrooms?\b|\b\d+\s*sqm)/i;
+            const pos = s.search(stopRe);
+            if (pos >= 0)
+                s = s.slice(0, pos).trim();
+            // Remove landmark phrases like ", by <place>"
+            s = s.replace(/,\s*by\s+[^,|;:.]+/gi, '');
+            // Prepend an "Off <road>" phrase if present in page and not already in s
+            try {
+                const full = $('body').text();
+                const offNear = full.match(/\boff\s+[A-Za-z][^,|;.]{2,60}/i);
+                if (offNear && !/\boff\s/i.test(s)) {
+                    const offStr = offNear[0].replace(/[\s\n]+/g, ' ').trim();
+                    s = `${offStr}, ${s}`;
+                }
+            }
+            catch { /* ignore */ }
+            // Append breadcrumb parts if missing
+            const bc = $('.breadcrumb li, nav.breadcrumb li, [class*="breadcrumb" i] li').map((_i, li) => $(li).text().trim()).get().filter(Boolean);
+            const neigh = bc[bc.length - 1] || '';
+            const cty = bc[bc.length - 2] || '';
+            const st = bc[bc.length - 3] || '';
+            const needPart = (part) => part && !new RegExp(`\\b${part.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i').test(s);
+            if (needPart(neigh))
+                s += `, ${neigh}`;
+            if (needPart(cty))
+                s += `, ${cty}`;
+            if (needPart(st))
+                s += `, ${st}`;
+            // Remove trailing ", Nigeria"
+            s = s.replace(/,\s*Nigeria\s*$/i, '').trim();
+            // Keep at most 7 comma parts to avoid dragging too much context
+            const parts = s.split(',').map(x => x.trim()).filter(Boolean);
+            if (parts.length > 7)
+                s = parts.slice(0, 7).join(', ');
+            return s;
+        };
         // Debug: Log the URL being processed
         console.log(`\n===== NPC Scraper Debug =====`);
         console.log(`[1/4] Starting parse for URL: ${url}`);
@@ -211,7 +261,22 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                 }
                 return null;
             },
-            // 6. Look for any element with address-like text (regex-based, case-insensitive)
+            // 6. Parse a "Prime Location:" or "Location:" section and trim at known promo labels
+            () => {
+                try {
+                    const full = $('body').text();
+                    const re = /\b(?:Prime\s*Location|Location)\s*:\s*([\s\S]*?)(?=\b(Delivery\s*Date|Exclusive|Apartment\s*Highlights|Luxury|A\s*Premium|Price|Facilities|Features)\b|$)/i;
+                    const m = full.match(re);
+                    if (m && m[1]) {
+                        let s = m[1].replace(/[\s\n]+/g, ' ').trim();
+                        s = s.replace(/\s*\(Ref:.*$/i, '').replace(/\s*\|.*$/, '').trim();
+                        return postProcessAddress(s);
+                    }
+                }
+                catch { /* ignore */ }
+                return null;
+            },
+            // 7. Look for any element with address-like text (regex-based, case-insensitive)
             () => {
                 const addrRe = /\b(road|street|avenue|close|drive|way|estate|villa|house|apartment|flat|junction|crescent|highway|boulevard|phase|quarter|quaters|quarters|off\s+[a-z])/i;
                 const blocks = $('p, li, .description, .property-description, .details, .key-details, .property-details, .body, .content').toArray();
@@ -222,44 +287,63 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                         continue;
                     if (!addrRe.test(t))
                         continue;
-                    // Split on line/period if present and pick the sub-segment with most commas
-                    const segs = t.split(/\.|\n|\r/).map(s => s.trim()).filter(Boolean);
+                    // Split on common separators and pick the sub-segment with most commas
+                    const segs = t.split(/\.|\n|\r| - /).map(s => s.trim()).filter(Boolean);
                     if (segs.length > 1) {
                         segs.sort((a, b) => (b.split(',').length - a.split(',').length) || (b.length - a.length));
                         t = segs[0];
                     }
-                    // Trim obvious tails
+                    // Trim obvious tails and promos, then enrich
                     t = t.replace(/\s*\(Ref:.*$/i, '').replace(/\s*\|.*$/, '').trim();
+                    t = postProcessAddress(t);
                     if (!best || t.split(',').length > best.split(',').length || t.length > best.length)
                         best = t;
                 }
                 return best;
             }
         ];
-        // Try each source until we find the most complete address
+        // Try each source with weights to prefer semantic quality (<address> first)
         const sourceNames = [
-            'address element',
-            'common address containers',
-            'meta tags',
-            'JSON-LD data',
-            'Google Maps links',
-            'address-like text'
+            'address element', // 0
+            'common address containers', // 1
+            'meta tags', // 2
+            'JSON-LD data', // 3
+            'Google Maps links', // 4
+            'Prime/Location section', // 5
+            'address-like text' // 6
         ];
+        const sourceWeight = (idx) => {
+            switch (idx) {
+                case 0: return 100; // <address>
+                case 1: return 85; // containers
+                case 3: return 80; // JSON-LD
+                case 5: return 75; // Prime/Location
+                case 4: return 60; // Maps
+                case 2: return 50; // meta
+                case 6: return 40; // regex scan
+                default: return 10;
+            }
+        };
+        let bestScore = 0;
+        let addressLockedFromTag = false;
         for (let i = 0; i < addressSources.length; i++) {
             try {
-                const result = addressSources[i]();
-                console.log(`[NPC Scraper] Trying source '${sourceNames[i]}':`, result || 'No result');
-                if (result && result.length > 10) {
-                    // Prefer the longer/more complete address; do not override with a shorter one
-                    if (!address_line1 || result.length > address_line1.length) {
-                        address_line1 = result;
-                        console.log('[NPC Scraper] Selected address:', address_line1);
+                const raw = addressSources[i]();
+                const processed = raw ? postProcessAddress(raw) : null;
+                console.log(`[NPC Scraper] Trying source '${sourceNames[i]}':`, processed || 'No result');
+                if (processed && processed.length > 10) {
+                    const candScore = sourceWeight(i) * 100000 + scoreAddr(processed);
+                    if (candScore > bestScore) {
+                        address_line1 = processed;
+                        bestScore = candScore;
+                        if (i === 0)
+                            addressLockedFromTag = true; // Prefer <address>, prevent later overrides
+                        console.log('[NPC Scraper] Selected address:', address_line1, 'score=', candScore);
                     }
                 }
             }
             catch (e) {
                 console.error(`[NPC Scraper] Error in source '${sourceNames[i]}':`, e);
-                // Continue to next source
             }
         }
         if (!address_line1) {
@@ -493,7 +577,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                 }
             }
             if (titleAddr) {
-                const better = scoreAddr(titleAddr) > scoreAddr(address_line1);
+                const better = !addressLockedFromTag && (scoreAddr(titleAddr) > scoreAddr(address_line1));
                 if (better)
                     address_line1 = titleAddr;
             }
@@ -524,7 +608,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                 }
                 catch { /* ignore */ }
                 if (docAddr) {
-                    const better2 = scoreAddr(docAddr) > scoreAddr(address_line1);
+                    const better2 = !addressLockedFromTag && (scoreAddr(docAddr) > scoreAddr(address_line1));
                     if (better2)
                         address_line1 = docAddr;
                 }
@@ -544,7 +628,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                         }
                     });
                     if (scriptAddr) {
-                        const better3 = scoreAddr(scriptAddr) > scoreAddr(address_line1);
+                        const better3 = !addressLockedFromTag && (scoreAddr(scriptAddr) > scoreAddr(address_line1));
                         if (better3)
                             address_line1 = scriptAddr;
                     }
@@ -567,28 +651,89 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         const bathMatch = metaText.match(/(\d+)\s*(bath|bathroom)s?/i) || bodyText.match(/(\d+)\s*(bath|bathroom)s?/i);
         // Size
         const sizeMatch = metaText.match(/([0-9,.]+)\s*(sqm|m2|square\s*meters?)/i) || bodyText.match(/([0-9,.]+)\s*(sqm|m2|square\s*meters?)/i);
-        // Listed/Updated dates
+        // Listed/Updated dates (robust)
+        // Helper: read labelled values from table cells like "<strong>Added On:</strong> 26 Dec 2024"
+        const readLabeledFromTables = (labels) => {
+            let found = null;
+            $('table tr td').each((_i, td) => {
+                if (found)
+                    return;
+                const strong = $(td).find('strong').first();
+                const lab = strong.text().trim().replace(/:$/, '');
+                if (!lab)
+                    return;
+                for (const want of labels) {
+                    if (new RegExp(`^${want}$`, 'i').test(lab)) {
+                        // Value is the td text without the strong label
+                        const value = $(td).clone().find('strong').remove().end().text().replace(/\s+/g, ' ').trim().replace(/^:\s*/, '');
+                        if (value) {
+                            found = value;
+                        }
+                        break;
+                    }
+                }
+            });
+            return found;
+        };
+        const metaPublished = $('meta[itemprop="datePublished"]').attr('content')
+            || $('meta[property="article:published_time"]').attr('content')
+            || $('meta[name="date"]').attr('content')
+            || $('time[itemprop="datePublished"]').attr('datetime')
+            || null;
         const metaModified = $('meta[itemprop="dateModified"]').attr('content')
             || $('meta[property="article:modified_time"]').attr('content')
+            || $('meta[name="last-modified"]').attr('content')
             || $('time[itemprop="dateModified"]').attr('datetime')
             || null;
-        // Prefer JSON-LD datePublished/dateModified, else DOM/meta, else text patterns
-        let listedAt = jsonDatePublished || $('time[datetime]').attr('datetime') || pickText($('.date-posted, .listed-date')) || null;
+        // Prefer JSON-LD, then meta/time, then visible text patterns
+        let listedAt = jsonDatePublished
+            || metaPublished
+            || $('time[datetime]').first().attr('datetime')
+            || null;
         let listingUpdatedAt = jsonDateModified || metaModified || null;
+        // Table-labelled dates (higher confidence than arbitrary body text)
         if (!listedAt) {
-            // Example texts: "Added On: 21 Aug 2025"
-            const addedMatch = bodyText.match(/Added\s*On:\s*([^\n|]+)/i);
-            if (addedMatch && addedMatch[1]) {
-                const d = new Date(addedMatch[1].trim());
+            const tVal = readLabeledFromTables(['Added On', 'Date Added', 'Added']);
+            if (tVal) {
+                const d = new Date(tVal);
                 if (!isNaN(d.getTime()))
                     listedAt = d.toISOString();
             }
         }
         if (!listingUpdatedAt) {
-            // Example texts: "Last Updated: 10 Oct 2025"
-            const updMatch = bodyText.match(/Last\s*Updated:\s*([^\n|]+)/i);
-            if (updMatch && updMatch[1]) {
-                const d = new Date(updMatch[1].trim());
+            const uVal = readLabeledFromTables(['Last Updated', 'Updated On', 'Modified On']);
+            if (uVal) {
+                const d = new Date(uVal);
+                if (!isNaN(d.getTime()))
+                    listingUpdatedAt = d.toISOString();
+            }
+        }
+        // Expand text-based extraction for listedAt
+        if (!listedAt) {
+            // Try visible date containers first
+            const dateSelText = pickText($('.date-posted, .listed-date, .date, .post-date, .added-on, .added, .meta-date'));
+            if (dateSelText) {
+                const m = dateSelText.match(/(\d{1,2}\s*[A-Za-z]{3,9}\s*\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})/);
+                if (m && m[0]) {
+                    const d = new Date(m[0]);
+                    if (!isNaN(d.getTime()))
+                        listedAt = d.toISOString();
+                }
+            }
+            if (!listedAt) {
+                const m = bodyText.match(/(?:Added|Date\s*Added|Posted|Posted\s*On|Published\s*On|Listed\s*On)\s*:??\s*([^\n|]+)/i);
+                if (m && m[1]) {
+                    const d = new Date(m[1].trim());
+                    if (!isNaN(d.getTime()))
+                        listedAt = d.toISOString();
+                }
+            }
+        }
+        // Expand text-based extraction for listingUpdatedAt
+        if (!listingUpdatedAt) {
+            const upd = bodyText.match(/(?:Last\s*Updated|Updated\s*On|Modified\s*On)\s*:??\s*([^\n|]+)/i);
+            if (upd && upd[1]) {
+                const d = new Date(upd[1].trim());
                 if (!isNaN(d.getTime()))
                     listingUpdatedAt = d.toISOString();
             }
