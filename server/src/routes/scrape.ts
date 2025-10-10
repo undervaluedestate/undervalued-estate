@@ -150,7 +150,11 @@ router.post('/seed', requireApiSecret(), async (req: Request, res: Response) => 
         };
         // parse -> normalize -> upsert
         const rawItem = await (adapter as any).parseListing(ctx, html, url);
-        const payload = normalizeToProperty({ ...rawItem, source });
+        const payload: any = normalizeToProperty({ ...rawItem, source });
+        // Mirror engine behavior: always bump scraped_at/last_seen_at; let DB set first_seen_at on new inserts
+        payload.scraped_at = new Date().toISOString();
+        payload.last_seen_at = payload.scraped_at;
+        if (payload.first_seen_at == null) delete payload.first_seen_at;
         const { error } = await supa.from('properties').upsert(payload, { onConflict: 'source_id,external_id', ignoreDuplicates: false });
         if (error) throw error;
         results.push({
