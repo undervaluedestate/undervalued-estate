@@ -231,7 +231,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       }
     ];
     
-    // Try each source until we find a good address
+    // Try each source until we find the most complete address
     const sourceNames = [
       'address element',
       'common address containers',
@@ -247,9 +247,11 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         console.log(`[NPC Scraper] Trying source '${sourceNames[i]}':`, result || 'No result');
         
         if (result && result.length > 10) {
-          address_line1 = result;
-          console.log('[NPC Scraper] Selected address:', address_line1);
-          break;
+          // Prefer the longer/more complete address; do not override with a shorter one
+          if (!address_line1 || result.length > address_line1.length) {
+            address_line1 = result;
+            console.log('[NPC Scraper] Selected address:', address_line1);
+          }
         }
       } catch (e) {
         console.error(`[NPC Scraper] Error in source '${sourceNames[i]}':`, e);
@@ -272,7 +274,11 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     for (const sel of addrCandidates) {
       const t = pickText($(sel));
       // Accept address text even if it contains city/state (user prefers completeness over cleanliness)
-      if (t && t.length >= 3) { address_line1 = t; break; }
+      if (t && t.length >= 3) {
+        if (!address_line1 || t.length > address_line1.length) {
+          address_line1 = t;
+        }
+      }
     }
 
     // Try to read Address from common detail rows: name/value list items
@@ -283,8 +289,9 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         const val = $(li).find('.value, .text').text().trim();
         if (!val || val.length < 3) continue;
         if (name.includes('address') || name.includes('location') || name.includes('street') || name.includes('estate')) {
-          address_line1 = val;
-          break;
+          if (!address_line1 || val.length > address_line1.length) {
+            address_line1 = val;
+          }
         }
       }
     }
