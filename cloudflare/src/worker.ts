@@ -40,6 +40,118 @@ const NIGERIA_SEEDS: string[] = [
   'https://www.properstar.co.uk/nigeria/ikoyi/buy/flat',
 ];
 
+// NigeriaPropertyCentre: 40+ region paths (flats/apartments for sale)
+type RegionDef = { name: string; paths: string[] };
+const NPC_REGIONS: RegionDef[] = [
+  { name: 'Lagos-Lekki', paths: ['/for-sale/flats-apartments/lagos/lekki/'] },
+  { name: 'Lagos-Ikoyi', paths: ['/for-sale/flats-apartments/lagos/ikoyi/'] },
+  { name: 'Lagos-Victoria-Island', paths: ['/for-sale/flats-apartments/lagos/victoria-island/'] },
+  { name: 'Lagos-Ajah', paths: ['/for-sale/flats-apartments/lagos/ajah/'] },
+  { name: 'Lagos-Ikeja', paths: ['/for-sale/flats-apartments/lagos/ikeja/'] },
+  { name: 'Lagos-Yaba', paths: ['/for-sale/flats-apartments/lagos/yaba/'] },
+  { name: 'Lagos-Surulere', paths: ['/for-sale/flats-apartments/lagos/surulere/'] },
+  { name: 'Lagos-Ilasan', paths: ['/for-sale/flats-apartments/lagos/ilasan/'] },
+  { name: 'Lagos-Osapa-London', paths: ['/for-sale/flats-apartments/lagos/osapa-london/'] },
+  { name: 'Lagos-Agungi', paths: ['/for-sale/flats-apartments/lagos/agungi/'] },
+  { name: 'Lagos-Chevron', paths: ['/for-sale/flats-apartments/lagos/chevron/'] },
+  { name: 'Lagos-Orchid', paths: ['/for-sale/flats-apartments/lagos/orchid/'] },
+  { name: 'Lagos-Sangotedo', paths: ['/for-sale/flats-apartments/lagos/sangotedo/'] },
+  { name: 'Lagos-Lekki-Phase-1', paths: ['/for-sale/flats-apartments/lagos/lekki/lekki-phase-1/'] },
+  { name: 'Lagos-Ikota', paths: ['/for-sale/flats-apartments/lagos/ikota/'] },
+  { name: 'Lagos-Ikate', paths: ['/for-sale/flats-apartments/lagos/ikate/'] },
+  { name: 'Lagos-Ogba', paths: ['/for-sale/flats-apartments/lagos/ogba/'] },
+  { name: 'Lagos-Gbagada', paths: ['/for-sale/flats-apartments/lagos/gbagada/'] },
+  { name: 'Lagos-Magodo', paths: ['/for-sale/flats-apartments/lagos/magodo/'] },
+  { name: 'Lagos-Festac', paths: ['/for-sale/flats-apartments/lagos/festac/'] },
+  { name: 'Lagos-Isolo', paths: ['/for-sale/flats-apartments/lagos/isolo/'] },
+  { name: 'Lagos-Maryland', paths: ['/for-sale/flats-apartments/lagos/maryland/'] },
+  { name: 'Lagos-Ojo', paths: ['/for-sale/flats-apartments/lagos/ojo/'] },
+  // Abuja
+  { name: 'Abuja-Maitama', paths: ['/for-sale/flats-apartments/abuja/maitama/'] },
+  { name: 'Abuja-Asokoro', paths: ['/for-sale/flats-apartments/abuja/asokoro/'] },
+  { name: 'Abuja-Wuse', paths: ['/for-sale/flats-apartments/abuja/wuse/'] },
+  { name: 'Abuja-Wuse-2', paths: ['/for-sale/flats-apartments/abuja/wuse-2/'] },
+  { name: 'Abuja-Gwarinpa', paths: ['/for-sale/flats-apartments/abuja/gwarinpa/'] },
+  { name: 'Abuja-Jabi', paths: ['/for-sale/flats-apartments/abuja/jabi/'] },
+  { name: 'Abuja-Lokogoma', paths: ['/for-sale/flats-apartments/abuja/lokogoma/'] },
+  { name: 'Abuja-Garki', paths: ['/for-sale/flats-apartments/abuja/garki/'] },
+  { name: 'Abuja-Guzape', paths: ['/for-sale/flats-apartments/abuja/guzape/'] },
+  { name: 'Abuja-Dawaki', paths: ['/for-sale/flats-apartments/abuja/gwarinpa/dawaki/'] },
+  { name: 'Abuja-Jahi', paths: ['/for-sale/flats-apartments/abuja/jahi/'] },
+  { name: 'Abuja-Katampe', paths: ['/for-sale/flats-apartments/abuja/katampe/'] },
+  { name: 'Abuja-Kado', paths: ['/for-sale/flats-apartments/abuja/kado/'] },
+  { name: 'Abuja-Utako', paths: ['/for-sale/flats-apartments/abuja/utako/'] },
+  // Other major cities
+  { name: 'Rivers-Port-Harcourt', paths: ['/for-sale/flats-apartments/rivers/port-harcourt/'] },
+  { name: 'Oyo-Ibadan-Bodija', paths: ['/for-sale/flats-apartments/oyo/ibadan/bodija/'] },
+  { name: 'Oyo-Ibadan-Oluyole', paths: ['/for-sale/flats-apartments/oyo/ibadan/oluyole/'] },
+  { name: 'Edo-Benin-GRA', paths: ['/for-sale/flats-apartments/edo/benin-city/gra/'] },
+  { name: 'Delta-Asaba', paths: ['/for-sale/flats-apartments/delta/asaba/'] },
+  { name: 'Delta-Warri', paths: ['/for-sale/flats-apartments/delta/warri/'] },
+  { name: 'Enugu-Independence-Layout', paths: ['/for-sale/flats-apartments/enugu/independence-layout/'] },
+  { name: 'Kano-Kano', paths: ['/for-sale/flats-apartments/kano/kano/'] },
+  { name: 'Kaduna-Kaduna', paths: ['/for-sale/flats-apartments/kaduna/kaduna/'] },
+  { name: 'Anambra-Awka', paths: ['/for-sale/flats-apartments/anambra/awka/'] },
+  { name: 'Imo-Owerri', paths: ['/for-sale/flats-apartments/imo/owerri/'] },
+  { name: 'AkwaIbom-Uyo', paths: ['/for-sale/flats-apartments/akwa-ibom/uyo/'] },
+  { name: 'CrossRiver-Calabar', paths: ['/for-sale/flats-apartments/cross-river/calabar/'] },
+  { name: 'Ogun-Abeokuta', paths: ['/for-sale/flats-apartments/ogun/abeokuta/'] },
+  { name: 'Osun-Osogbo', paths: ['/for-sale/flats-apartments/osun/osogbo/'] },
+  { name: 'Ondo-Akure', paths: ['/for-sale/flats-apartments/ondo/akure/'] },
+  { name: 'Kwara-Ilorin', paths: ['/for-sale/flats-apartments/kwara/ilorin/'] },
+  { name: 'Plateau-Jos', paths: ['/for-sale/flats-apartments/plateau/jos/'] },
+  { name: 'Bauchi-Bauchi', paths: ['/for-sale/flats-apartments/bauchi/bauchi/'] },
+  { name: 'Sokoto-Sokoto', paths: ['/for-sale/flats-apartments/sokoto/sokoto/'] }
+];
+
+// Properstar (Nigeria) regions as full URLs (buy flats)
+type PRegion = { name: string; startUrls: string[] };
+const PROPERSTAR_REGIONS: PRegion[] = [
+  { name: 'Lagos', startUrls: ['https://www.properstar.co.uk/nigeria/lagos/buy/flat'] },
+  { name: 'Abuja', startUrls: ['https://www.properstar.co.uk/nigeria/abuja/buy/flat'] },
+  { name: 'Port-Harcourt', startUrls: ['https://www.properstar.co.uk/nigeria/port-harcourt/buy/flat'] },
+  { name: 'Ibadan', startUrls: ['https://www.properstar.co.uk/nigeria/ibadan/buy/flat'] },
+  { name: 'Enugu', startUrls: ['https://www.properstar.co.uk/nigeria/enugu/buy/flat'] },
+  { name: 'Benin-City', startUrls: ['https://www.properstar.co.uk/nigeria/benin-city/buy/flat'] },
+  { name: 'Kano', startUrls: ['https://www.properstar.co.uk/nigeria/kano/buy/flat'] },
+  { name: 'Kaduna', startUrls: ['https://www.properstar.co.uk/nigeria/kaduna/buy/flat'] },
+  { name: 'Asaba', startUrls: ['https://www.properstar.co.uk/nigeria/asaba/buy/flat'] },
+  { name: 'Warri', startUrls: ['https://www.properstar.co.uk/nigeria/warri/buy/flat'] },
+  { name: 'Uyo', startUrls: ['https://www.properstar.co.uk/nigeria/uyo/buy/flat'] },
+  { name: 'Calabar', startUrls: ['https://www.properstar.co.uk/nigeria/calabar/buy/flat'] },
+  { name: 'Owerri', startUrls: ['https://www.properstar.co.uk/nigeria/owerri/buy/flat'] },
+  { name: 'Onitsha', startUrls: ['https://www.properstar.co.uk/nigeria/onitsha/buy/flat'] },
+  { name: 'Akure', startUrls: ['https://www.properstar.co.uk/nigeria/akure/buy/flat'] },
+  { name: 'Ilorin', startUrls: ['https://www.properstar.co.uk/nigeria/ilorin/buy/flat'] },
+  { name: 'Jos', startUrls: ['https://www.properstar.co.uk/nigeria/jos/buy/flat'] },
+  { name: 'Osogbo', startUrls: ['https://www.properstar.co.uk/nigeria/osogbo/buy/flat'] },
+  { name: 'Abeokuta', startUrls: ['https://www.properstar.co.uk/nigeria/abeokuta/buy/flat'] },
+  { name: 'Sokoto', startUrls: ['https://www.properstar.co.uk/nigeria/sokoto/buy/flat'] }
+];
+
+// Properstar UK regions (buy flats) including Aberdeen, Glasgow, Edinburgh
+const PROPERSTAR_UK_REGIONS: PRegion[] = [
+  { name: 'London', startUrls: ['https://www.properstar.co.uk/united-kingdom/london/buy/flat'] },
+  { name: 'Manchester', startUrls: ['https://www.properstar.co.uk/united-kingdom/manchester/buy/flat'] },
+  { name: 'Birmingham', startUrls: ['https://www.properstar.co.uk/united-kingdom/birmingham/buy/flat'] },
+  { name: 'Leeds', startUrls: ['https://www.properstar.co.uk/united-kingdom/leeds/buy/flat'] },
+  { name: 'Liverpool', startUrls: ['https://www.properstar.co.uk/united-kingdom/liverpool/buy/flat'] },
+  { name: 'Bristol', startUrls: ['https://www.properstar.co.uk/united-kingdom/bristol/buy/flat'] },
+  { name: 'Sheffield', startUrls: ['https://www.properstar.co.uk/united-kingdom/sheffield/buy/flat'] },
+  { name: 'Newcastle', startUrls: ['https://www.properstar.co.uk/united-kingdom/newcastle-upon-tyne/buy/flat'] },
+  { name: 'Nottingham', startUrls: ['https://www.properstar.co.uk/united-kingdom/nottingham/buy/flat'] },
+  { name: 'Leicester', startUrls: ['https://www.properstar.co.uk/united-kingdom/leicester/buy/flat'] },
+  { name: 'Cambridge', startUrls: ['https://www.properstar.co.uk/united-kingdom/cambridge/buy/flat'] },
+  { name: 'Oxford', startUrls: ['https://www.properstar.co.uk/united-kingdom/oxford/buy/flat'] },
+  { name: 'Brighton', startUrls: ['https://www.properstar.co.uk/united-kingdom/brighton/buy/flat'] },
+  { name: 'Southampton', startUrls: ['https://www.properstar.co.uk/united-kingdom/southampton/buy/flat'] },
+  { name: 'Portsmouth', startUrls: ['https://www.properstar.co.uk/united-kingdom/portsmouth/buy/flat'] },
+  { name: 'Cardiff', startUrls: ['https://www.properstar.co.uk/united-kingdom/cardiff/buy/flat'] },
+  { name: 'Belfast', startUrls: ['https://www.properstar.co.uk/united-kingdom/belfast/buy/flat'] },
+  { name: 'Aberdeen', startUrls: ['https://www.properstar.co.uk/united-kingdom/aberdeen/buy/flat'] },
+  { name: 'Glasgow', startUrls: ['https://www.properstar.co.uk/united-kingdom/glasgow/buy/flat'] },
+  { name: 'Edinburgh', startUrls: ['https://www.properstar.co.uk/united-kingdom/edinburgh/buy/flat'] }
+];
 export default {
   async scheduled(_event: any, env: Env, _ctx: any) {
     const { API_URL, API_SECRET } = env;
@@ -57,26 +169,64 @@ export default {
     const regionSeeds = hour % 2 === 0 ? UK_SEEDS : NIGERIA_SEEDS;
 
     try {
-      // 1) Small NPC run
-      const npcBody = { adapterName: 'NigeriaPropertyCentre', maxPages: 1, maxUrls: 10, requestTimeoutMs: 8000, discoveryTimeoutMs: 6000 };
-      const npcRes = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(npcBody) });
-      const npcTxt = await npcRes.text();
-      console.log('[scheduled] NPC:', npcRes.status, npcTxt.slice(0, 200));
+      // Helper: chunk an array
+      const chunk = <T,>(arr: T[], size: number) => arr.reduce((acc: T[][], _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), [] as T[][]);
 
-      // 2) Properstar run (buy)
-      const properBody = {
-        adapterName: 'Properstar',
-        startUrls: regionSeeds,
-        maxPages: 1,
-        maxUrls: 12,
-        requestTimeoutMs: 18000,
-        discoveryTimeoutMs: 12000,
-        concurrency: 2,
-        listingType: 'buy',
-      };
-      const properRes = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(properBody) });
-      const properTxt = await properRes.text();
-      console.log('[scheduled] Properstar:', properRes.status, properTxt.slice(0, 200));
+      // 1) NPC multi-region fan-out (40+ regions)
+      const npcChunks = chunk(NPC_REGIONS, 10); // 4–5 backend calls instead of 1 huge call
+      for (const [i, group] of npcChunks.entries()) {
+        const npcBody = {
+          adapterName: 'NigeriaPropertyCentre',
+          regions: group,
+          regionConcurrency: 6,
+          concurrency: 3,
+          maxPages: 2,
+          maxUrls: 50,
+          requestTimeoutMs: 20000,
+          discoveryTimeoutMs: 15000
+        };
+        const npcRes = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(npcBody) });
+        const npcTxt = await npcRes.text();
+        console.log(`[scheduled] NPC group ${i+1}/${npcChunks.length}:`, npcRes.status, npcTxt.slice(0, 200));
+      }
+
+      // 2) Properstar multi-region fan-out (Nigeria focus)
+      const psChunks = chunk(PROPERSTAR_REGIONS, 10);
+      for (const [i, group] of psChunks.entries()) {
+        const body = {
+          adapterName: 'Properstar',
+          regions: group,
+          regionConcurrency: 6,
+          concurrency: 2,
+          maxPages: 1,
+          maxUrls: 30,
+          requestTimeoutMs: 18000,
+          discoveryTimeoutMs: 12000,
+          listingType: 'buy'
+        };
+        const res2 = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
+        const txt2 = await res2.text();
+        console.log(`[scheduled] Properstar group ${i+1}/${psChunks.length}:`, res2.status, txt2.slice(0, 200));
+      }
+
+      // 2b) Properstar multi-region fan-out (UK focus)
+      const ukChunks = chunk(PROPERSTAR_UK_REGIONS, 10);
+      for (const [i, group] of ukChunks.entries()) {
+        const body = {
+          adapterName: 'Properstar',
+          regions: group,
+          regionConcurrency: 6,
+          concurrency: 2,
+          maxPages: 1,
+          maxUrls: 30,
+          requestTimeoutMs: 18000,
+          discoveryTimeoutMs: 12000,
+          listingType: 'buy'
+        };
+        const res3 = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
+        const txt3 = await res3.text();
+        console.log(`[scheduled] Properstar UK group ${i+1}/${ukChunks.length}:`, res3.status, txt3.slice(0, 200));
+      }
 
       // 3) Benchmarks refresh
       const benchRes = await fetch(`${API_URL}/api/scrape/benchmarks/refresh`, { method: 'POST', headers, body: JSON.stringify({}) });

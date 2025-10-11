@@ -45,6 +45,52 @@ router.post('/run', requireApiSecret(), async (req, res) => {
         if (effectiveDryRun) {
             return res.json({ status: 'ok', adapters: engine.listAdapters(), note: 'dryRun=true, no network calls' });
         }
+        // If regions are provided, fan out runs per region with bounded parallelism
+        const regions = Array.isArray(body.regions) ? body.regions : [];
+        if (regions.length > 0) {
+            if (!adapterName)
+                return res.status(400).json({ error: 'adapterName is required when using regions[]' });
+            // Determine base_url for adapter to prefix region paths when needed
+            const defaultBaseUrlMap = {
+                'NigeriaPropertyCentre': 'https://nigeriapropertycentre.com/',
+                'Properstar': 'https://www.properstar.co.uk/'
+            };
+            const base_url = defaultBaseUrlMap[adapterName] || defaultBaseUrlMap['NigeriaPropertyCentre'];
+            const toAbsolute = (u) => {
+                try {
+                    return new URL(u).toString();
+                }
+                catch {
+                    return new URL(u.replace(/^\/*/, '/'), base_url).toString();
+                }
+            };
+            const pLimit = (await import('p-limit')).default;
+            const limit = pLimit(Math.min(10, Math.max(1, Number(body.regionConcurrency) || 5)));
+            const perRegionTasks = regions.map((r, idx) => limit(async () => {
+                const name = typeof r === 'string' ? r : (r.name || `region_${idx + 1}`);
+                const startUrls = Array.isArray(r.startUrls) && r.startUrls.length
+                    ? r.startUrls
+                    : (Array.isArray(r.paths) && r.paths.length ? r.paths : [String(r)]);
+                const absStartUrls = startUrls.map(toAbsolute);
+                const regionResult = await engine.run({
+                    adapterName,
+                    maxPages,
+                    maxUrls,
+                    requestTimeoutMs,
+                    discoveryTimeoutMs,
+                    extraStartUrls: absStartUrls,
+                    extraListingType: body.listingType,
+                    concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
+                });
+                return { name, ...regionResult };
+            }));
+            const regionResults = await Promise.all(perRegionTasks);
+            const inserted = regionResults.reduce((s, r) => s + (r.inserted || 0), 0);
+            const discovered = regionResults.reduce((s, r) => s + (r.discovered || 0), 0);
+            const errorsAgg = regionResults.flatMap(r => (r.errors || []).map((e) => `${r.name}: ${e}`));
+            return res.json({ status: 'ok', inserted, discovered, regions: regionResults, errors: errorsAgg, adapters: engine.listAdapters() });
+        }
+        // Single-run path (no regions[] provided)
         const results = await engine.run({
             adapterName,
             maxPages,

@@ -55,6 +55,12 @@ export class ScrapeEngine {
     let totalDiscovered = 0;
     const errors: string[] = [];
 
+    // Determine per-run concurrency limiter
+    const effectiveConcurrency = typeof concurrency === 'number' && concurrency > 0
+      ? Math.min(10, Math.max(1, Math.floor(concurrency)))
+      : this.concurrency;
+    const runLimit = pLimit(effectiveConcurrency);
+
     for (const adapter of adapters) {
       const meta = adapter.getMeta();
       let source = sources?.find((s: any) => s.name === meta.name);
@@ -126,7 +132,7 @@ export class ScrapeEngine {
 
       // Fetch + parse + upsert with retry/backoff and optional polite delay for Properstar
       const tasks = uniqueUrls.map((url) =>
-        this.limit(async () => {
+        runLimit(async () => {
           // Insert a small delay for Properstar to reduce rate-limits
           if (meta.name === 'Properstar') {
             await sleep(250 + Math.floor(Math.random() * 150)); // 250–400ms

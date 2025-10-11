@@ -23,12 +23,20 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
   getMeta() { return { name: 'NigeriaPropertyCentre' }; }
 
   async *discoverListingUrls(ctx: ScrapeContext): AsyncGenerator<string> {
-    // Prefer for-sale indexes; try a couple of common category paths
+    // Prefer region-specific bases when provided
     const origin = new URL(ctx.source.base_url).origin;
-    const listingBases = [
-      new URL('/for-sale/', ctx.source.base_url).toString(),
-      new URL('/for-sale/houses/', ctx.source.base_url).toString(),
-    ];
+    const providedBases = Array.isArray((ctx as any).extra?.startUrls) && (ctx as any).extra.startUrls.length
+      ? (ctx as any).extra.startUrls as string[]
+      : [];
+    const toAbs = (u: string) => {
+      try { return new URL(u).toString(); } catch { return new URL(u.replace(/^\/*/, '/'), ctx.source.base_url).toString(); }
+    };
+    const listingBases = providedBases.length
+      ? providedBases.map(toAbs)
+      : [
+          new URL('/for-sale/', ctx.source.base_url).toString(),
+          new URL('/for-sale/houses/', ctx.source.base_url).toString(),
+        ];
     const maxPages = Math.max(1, ctx.maxPages || 1);
 
     for (const base of listingBases) {

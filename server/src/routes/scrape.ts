@@ -23,6 +23,8 @@ type ScrapeRunDTO = {
   dryRun?: boolean;
   startUrls?: string[];
   concurrency?: number;
+  regions?: Array<string | { name?: string; paths?: string[]; startUrls?: string[] }>;
+  regionConcurrency?: number;
 };
 
 router.post('/run', requireApiSecret(), async (req: Request, res: Response) => {
@@ -58,6 +60,47 @@ router.post('/run', requireApiSecret(), async (req: Request, res: Response) => {
       return res.json({ status: 'ok', adapters: engine.listAdapters(), note: 'dryRun=true, no network calls' });
     }
 
+    // If regions are provided, fan out runs per region with bounded parallelism
+    const regions = Array.isArray(body.regions) ? body.regions : [];
+    if (regions.length > 0) {
+      if (!adapterName) return res.status(400).json({ error: 'adapterName is required when using regions[]' });
+      // Determine base_url for adapter to prefix region paths when needed
+      const defaultBaseUrlMap: Record<string, string> = {
+        'NigeriaPropertyCentre': 'https://nigeriapropertycentre.com/',
+        'Properstar': 'https://www.properstar.co.uk/'
+      };
+      const base_url = defaultBaseUrlMap[adapterName] || defaultBaseUrlMap['NigeriaPropertyCentre'];
+      const toAbsolute = (u: string) => {
+        try { return new URL(u).toString(); } catch { return new URL(u.replace(/^\/*/, '/'), base_url).toString(); }
+      };
+      const pLimit = (await import('p-limit')).default as any;
+      const limit = pLimit(Math.min(10, Math.max(1, Number(body.regionConcurrency) || 5)));
+      const perRegionTasks = regions.map((r, idx) => limit(async () => {
+        const name = typeof r === 'string' ? r : (r.name || `region_${idx+1}`);
+        const startUrls: string[] = Array.isArray((r as any).startUrls) && (r as any).startUrls!.length
+          ? (r as any).startUrls!
+          : (Array.isArray((r as any).paths) && (r as any).paths!.length ? (r as any).paths! : [String(r)]);
+        const absStartUrls = startUrls.map(toAbsolute);
+        const regionResult = await engine.run({
+          adapterName,
+          maxPages,
+          maxUrls,
+          requestTimeoutMs,
+          discoveryTimeoutMs,
+          extraStartUrls: absStartUrls,
+          extraListingType: (body as any).listingType as 'buy' | 'rent' | undefined,
+          concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
+        });
+        return { name, ...regionResult };
+      }));
+      const regionResults = await Promise.all(perRegionTasks);
+      const inserted = regionResults.reduce((s, r) => s + (r.inserted || 0), 0);
+      const discovered = regionResults.reduce((s, r) => s + (r.discovered || 0), 0);
+      const errorsAgg = regionResults.flatMap(r => (r.errors || []).map((e: string) => `${r.name}: ${e}`));
+      return res.json({ status: 'ok', inserted, discovered, regions: regionResults, errors: errorsAgg, adapters: engine.listAdapters() });
+    }
+
+    // Single-run path (no regions[] provided)
     const results = await engine.run({
       adapterName,
       maxPages,

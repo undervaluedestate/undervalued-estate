@@ -20,12 +20,25 @@ function pickText($el) {
 export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     getMeta() { return { name: 'NigeriaPropertyCentre' }; }
     async *discoverListingUrls(ctx) {
-        // Prefer for-sale indexes; try a couple of common category paths
+        // Prefer region-specific bases when provided
         const origin = new URL(ctx.source.base_url).origin;
-        const listingBases = [
-            new URL('/for-sale/', ctx.source.base_url).toString(),
-            new URL('/for-sale/houses/', ctx.source.base_url).toString(),
-        ];
+        const providedBases = Array.isArray(ctx.extra?.startUrls) && ctx.extra.startUrls.length
+            ? ctx.extra.startUrls
+            : [];
+        const toAbs = (u) => {
+            try {
+                return new URL(u).toString();
+            }
+            catch {
+                return new URL(u.replace(/^\/*/, '/'), ctx.source.base_url).toString();
+            }
+        };
+        const listingBases = providedBases.length
+            ? providedBases.map(toAbs)
+            : [
+                new URL('/for-sale/', ctx.source.base_url).toString(),
+                new URL('/for-sale/houses/', ctx.source.base_url).toString(),
+            ];
         const maxPages = Math.max(1, ctx.maxPages || 1);
         for (const base of listingBases) {
             for (let page = 1; page <= maxPages; page++) {
@@ -80,7 +93,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
             return parts * 1000 + String(s).length;
         };
         // Helper to trim promos, labels and enrich with nearby cues and breadcrumb
-        const postProcessAddress = (raw) => {
+        const postProcessAddress = (raw, opts) => {
             if (!raw)
                 return raw;
             let s = String(raw);
@@ -91,36 +104,40 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                 s = s.replace(/^[\s\S]*?\b(Prime\s*Location|Location)\s*:\s*/i, '');
             }
             // Normalize whitespace
-            s = s.replace(/[\s\n]+/g, ' ').trim();
+            s = s.replace(/[\s\n]+/g, ' ').replace(/\u00a0|&nbsp;/g, ' ').trim();
+            // Remove accidental site phrases
+            s = s.replace(/\bthis website\b/gi, '').replace(/\s{2,}/g, ' ').trim();
             // Cut at promo keywords if they appear inside the candidate
             const stopRe = /(Delivery\s*Date|Exclusive\b|Apartment\s*Highlights|Luxury\b|A\s*Premium\b|Facilities\b|Features\b|Fully\s+Equipped|Generator\b|Gym\b|Parking\b|Bedrooms?\b|\b\d+\s*sqm)/i;
             const pos = s.search(stopRe);
             if (pos >= 0)
                 s = s.slice(0, pos).trim();
-            // Remove landmark phrases like ", by <place>"
-            s = s.replace(/,\s*by\s+[^,|;:.]+/gi, '');
-            // Prepend an "Off <road>" phrase if present in page and not already in s
-            try {
-                const full = $('body').text();
-                const offNear = full.match(/\boff\s+[A-Za-z][^,|;.]{2,60}/i);
-                if (offNear && !/\boff\s/i.test(s)) {
-                    const offStr = offNear[0].replace(/[\s\n]+/g, ' ').trim();
-                    s = `${offStr}, ${s}`;
+            if (!opts?.strict) {
+                // Remove landmark phrases like ", by <place>"
+                s = s.replace(/,\s*by\s+[^,|;:.]+/gi, '');
+                // Prepend an "Off <road>" phrase if present in page and not already in s
+                try {
+                    const full = $('body').text();
+                    const offNear = full.match(/\boff\s+(?!this\b)[A-Za-z][^,|;.]{2,60}/i);
+                    if (offNear && !/\boff\s/i.test(s)) {
+                        const offStr = offNear[0].replace(/[\s\n]+/g, ' ').trim();
+                        s = `${offStr}, ${s}`;
+                    }
                 }
+                catch { /* ignore */ }
+                // Append breadcrumb parts if missing
+                const bc = $('.breadcrumb li, nav.breadcrumb li, [class*="breadcrumb" i] li').map((_i, li) => $(li).text().trim()).get().filter(Boolean);
+                const neigh = bc[bc.length - 1] || '';
+                const cty = bc[bc.length - 2] || '';
+                const st = bc[bc.length - 3] || '';
+                const needPart = (part) => part && !new RegExp(`\\b${part.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i').test(s);
+                if (needPart(neigh))
+                    s += `, ${neigh}`;
+                if (needPart(cty))
+                    s += `, ${cty}`;
+                if (needPart(st))
+                    s += `, ${st}`;
             }
-            catch { /* ignore */ }
-            // Append breadcrumb parts if missing
-            const bc = $('.breadcrumb li, nav.breadcrumb li, [class*="breadcrumb" i] li').map((_i, li) => $(li).text().trim()).get().filter(Boolean);
-            const neigh = bc[bc.length - 1] || '';
-            const cty = bc[bc.length - 2] || '';
-            const st = bc[bc.length - 3] || '';
-            const needPart = (part) => part && !new RegExp(`\\b${part.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i').test(s);
-            if (needPart(neigh))
-                s += `, ${neigh}`;
-            if (needPart(cty))
-                s += `, ${cty}`;
-            if (needPart(st))
-                s += `, ${st}`;
             // Remove trailing ", Nigeria"
             s = s.replace(/,\s*Nigeria\s*$/i, '').trim();
             // Keep at most 7 comma parts to avoid dragging too much context
@@ -174,12 +191,13 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         const addressSources = [
             // 1. Check for <address> element first (common pattern)
             () => {
-                const el = $('address').first();
+                const el = $('.property-details address, address').first();
                 if (el.length) {
                     // Get all text content including nested elements
                     return el.text()
                         .replace(/\s+/g, ' ')
                         .replace(/[\n\t]/g, ' ')
+                        .replace(/\u00a0|&nbsp;/g, ' ')
                         .trim();
                 }
                 return null;
@@ -329,7 +347,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
         for (let i = 0; i < addressSources.length; i++) {
             try {
                 const raw = addressSources[i]();
-                const processed = raw ? postProcessAddress(raw) : null;
+                const processed = raw ? postProcessAddress(raw, { strict: i === 0 }) : null;
                 console.log(`[NPC Scraper] Trying source '${sourceNames[i]}':`, processed || 'No result');
                 if (processed && processed.length > 10) {
                     const candScore = sourceWeight(i) * 100000 + scoreAddr(processed);
@@ -346,28 +364,29 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                 console.error(`[NPC Scraper] Error in source '${sourceNames[i]}':`, e);
             }
         }
-        if (!address_line1) {
+        if (!address_line1 && !addressLockedFromTag) {
             console.warn('[NPC Scraper] No valid address found using any method');
         }
         // Then try common selectors as fallback
-        const addrCandidates = [
-            '.address',
-            '.property-address',
-            'span[itemprop="streetAddress"]',
-            '.property-details .value:contains("Estate"), .property-details .value:contains("Address")',
-            '.breadcrumb li:nth-last-child(3) a',
-        ];
-        for (const sel of addrCandidates) {
-            const t = pickText($(sel));
-            // Accept address text even if it contains city/state (user prefers completeness over cleanliness)
-            if (t && t.length >= 3) {
-                if (!address_line1 || t.length > address_line1.length) {
-                    address_line1 = t;
+        if (!addressLockedFromTag) {
+            const addrCandidates = [
+                '.address',
+                '.property-address',
+                'span[itemprop="streetAddress"]',
+                '.property-details .value:contains("Estate"), .property-details .value:contains("Address")',
+                '.breadcrumb li:nth-last-child(3) a',
+            ];
+            for (const sel of addrCandidates) {
+                const t = pickText($(sel));
+                if (t && t.length >= 3) {
+                    if (!address_line1 || t.length > address_line1.length) {
+                        address_line1 = t;
+                    }
                 }
             }
         }
         // Try to read Address from common detail rows: name/value list items
-        if (!address_line1) {
+        if (!address_line1 && !addressLockedFromTag) {
             const detailRows = $('.property-details li, .details li, .key-details li, .facts li').toArray();
             for (const li of detailRows) {
                 const name = $(li).find('.name, .label, .title').text().trim().toLowerCase();
@@ -382,7 +401,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
             }
         }
         // Parse tables and definition lists for Address/Location labels
-        if (!address_line1) {
+        if (!address_line1 && !addressLockedFromTag) {
             $('table tr').each((_i, tr) => {
                 const cells = $(tr).find('th,td');
                 if (cells.length < 2)
@@ -414,7 +433,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
             }
         }
         // As a final labeled-text fallback, scan body text for 'Address:' or 'Location:'
-        if (!address_line1) {
+        if (!address_line1 && !addressLockedFromTag) {
             try {
                 const fullText = $('body').text();
                 const m1 = fullText.match(/Address\s*:\s*([^\n|]+)/i);
