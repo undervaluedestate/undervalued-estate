@@ -75,14 +75,9 @@ export class ProperstarAdapter extends BaseAdapter {
         const $ = cheerio.load(html);
 
         const candidates: string[] = [];
-        // Properstar pages have many anchors; capture both category and listing detail links
+        // Properstar pages have many anchors; capture only listing detail links
         $(
           [
-            'a[href*="/sale"]',
-            'a[href*="/buy"]',
-            'a[href*="/rent"]',
-            'a[title][href*="/sale"]',
-            'a.card[href*="/sale"]',
             'a[href*="/listing/"]',
           ].join(', ')
         ).each((_, a) => {
@@ -99,10 +94,6 @@ export class ProperstarAdapter extends BaseAdapter {
               candidates.push(abs);
               return;
             }
-            // Otherwise, require country + (buy|sale|rent) + deeper path
-            if (!(u.pathname.includes('/sale') || u.pathname.includes('/buy') || u.pathname.includes('/rent'))) return;
-            if (segs.length < 3) return; // avoid shallow category/nav
-            candidates.push(abs);
           } catch { /* ignore */ }
         });
 
@@ -150,8 +141,10 @@ export class ProperstarAdapter extends BaseAdapter {
           for (const u of urlsFromJson) candidates.push(u);
         } catch { /* ignore */ }
 
-        const unique = Array.from(new Set(candidates));
+        const unique = Array.from(new Set(candidates.filter(u => /\/listing\//.test(u))));
         for (const u of unique) { yielded++; yield u; }
+        // If no listings found on this page, stop early to avoid scraping empty lists
+        if (unique.length === 0) break;
       }
       // Update cursor to next page after processing
       try {
