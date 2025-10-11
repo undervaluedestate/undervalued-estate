@@ -19,6 +19,7 @@ router.get('/', async (req: Request, res: Response) => {
       max_size_sqm,
       min_pct_below, // positive number like 10 means <= -10%
       deal_type, // 'slightly_undervalued' | 'strongly_undervalued' | 'rare_deal'
+      listing_type, // optional override; default to 'buy'
       page = '1',
       per_page = '20',
       sort = 'final_pct_vs_market',
@@ -27,6 +28,12 @@ router.get('/', async (req: Request, res: Response) => {
 
     const supa = getAnonClient();
     let query = supa.from('v_search_results').select('*', { count: 'exact' });
+    // Default to BUY listings. We use rent data only for insights (yield) not as separate cards.
+    if (!listing_type) {
+      query = query.eq('listing_type', 'buy');
+    } else if (listing_type === 'buy' || listing_type === 'rent') {
+      query = query.eq('listing_type', listing_type);
+    }
 
     if (country) query = query.eq('country', country);
     if (state) query = query.eq('state', state);

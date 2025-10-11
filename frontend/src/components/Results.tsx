@@ -20,12 +20,16 @@ type Item = {
   deal_class: 'none' | 'slightly_undervalued' | 'strongly_undervalued' | 'rare_deal' | null;
 };
 
-function formatMoney(n: number | null | undefined){
+function formatMoney(n: number | null | undefined, currency?: string, country?: string | null){
   if(n==null) return '—';
+  const fallback = (country || '').toLowerCase().includes('united kingdom') ? 'GBP' : 'NGN';
+  const cur = (currency || fallback).toUpperCase();
+  const localeMap: Record<string, string> = { NGN: 'en-NG', GBP: 'en-GB', EUR: 'en-IE', USD: 'en-US' };
+  const locale = localeMap[cur] || 'en-GB';
   try{
-    return new Intl.NumberFormat('en-NG', { style:'currency', currency:'NGN', maximumFractionDigits:0 }).format(n);
+    return new Intl.NumberFormat(locale, { style:'currency', currency: cur as any, maximumFractionDigits:0 }).format(n);
   }catch{
-    return `${n}`;
+    return `${n} ${cur}`;
   }
 }
 
@@ -55,16 +59,16 @@ export default function Results({ items }: { items: Item[] }): JSX.Element {
           </div>
           <div className="title">{it.title || 'Listing'}</div>
           <div className="meta">
-            <span>{formatMoney(it.price)}</span>
+            <span>{formatMoney(it.price, it.currency, it.country)}</span>
             <span>•</span>
             <span>{it.size_sqm ? `${it.size_sqm} sqm` : 'Size N/A'}</span>
             <span>•</span>
             <span>{it.property_type}</span>
           </div>
           <div className="meta" style={{marginTop:8}}>
-            <span>Price/sqm: {it.price_per_sqm ? formatMoney(it.price_per_sqm) : '—'}</span>
+            <span>Price/sqm: {it.price_per_sqm ? formatMoney(it.price_per_sqm, it.currency, it.country) : '—'}</span>
             <span>•</span>
-            <span>Market: {it.market_avg_price_per_sqm ? formatMoney(it.market_avg_price_per_sqm) : '—'}</span>
+            <span>Market: {it.market_avg_price_per_sqm ? formatMoney(it.market_avg_price_per_sqm, it.currency, it.country) : '—'}</span>
             <span>•</span>
             <span>% vs market: {it.pct_vs_market ?? '—'}%</span>
           </div>
