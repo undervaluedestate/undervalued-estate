@@ -51,7 +51,8 @@ export default {
         maxUrls: 30,
         requestTimeoutMs: 18000,
         discoveryTimeoutMs: 12000,
-        listingType: doRent ? 'rent' : 'buy'
+        listingType: doRent ? 'rent' : 'buy',
+        respondQuick: true
       };
       const res = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
       const txt = await res.text();

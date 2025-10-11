@@ -3,7 +3,7 @@ import { requireApiSecret } from '../utils/auth';
 import { getAdminClient } from '../utils/supabase';
 import { ScrapeEngine } from '../services/scraping/engine';
 import { NigeriaPropertyCentreAdapter } from '../services/scraping/sites/nigeriaPropertyCentre';
-import { ProperstarAdapter } from 'services/scraping/sites/properstar';
+import { ProperstarAdapter } from '../services/scraping/sites/properstar';
 import { ZooplaAdapter } from '../services/scraping/sites/zoopla';
 import { getText } from '../services/scraping/http';
 import { normalizeToProperty } from '../services/scraping/normalize';
@@ -103,27 +103,18 @@ router.post('/run', requireApiSecret(), async (req: Request, res: Response) => {
             }
           }
         } catch { /* ignore */ }
-        // Try to acquire lock using insert+ignoreDuplicates to avoid race upsert errors
+        // Try to acquire lock atomically via RPC (only succeeds if expired or new)
         try {
-          const nowIso = new Date().toISOString();
-          const untilIso = new Date(Date.now() + lockForMs).toISOString();
-          // Remove expired lock if present
-          await supa.from('run_locks').delete().lt('locked_until', nowIso).eq('lock_key', lock_key);
-          // Check again after cleanup
-          const { data: existing } = await supa.from('run_locks').select('locked_until').eq('lock_key', lock_key).maybeSingle();
-          if (existing && new Date(existing.locked_until).getTime() > Date.now()) {
+          const ttlSeconds = Math.floor(lockForMs / 1000);
+          const { data: acquired, error: lockErr } = await supa.rpc('acquire_run_lock', {
+            p_lock_key: lock_key,
+            p_owner: owner,
+            p_ttl_seconds: ttlSeconds,
+          });
+          if (lockErr) {
             return { name, skipped: true, reason: 'locked' } as any;
           }
-          // Attempt to acquire lock via upsert; if row exists and not expired, someone else likely holds it
-          const up = await supa
-            .from('run_locks')
-            .upsert({ lock_key, locked_until: untilIso, owner }, { onConflict: 'lock_key', ignoreDuplicates: false });
-          if (up.error) {
-            return { name, skipped: true, reason: 'locked' } as any;
-          }
-          // Verify we now own the lock; if someone else owns it and it's not expired, skip
-          const { data: after } = await supa.from('run_locks').select('locked_until, owner').eq('lock_key', lock_key).maybeSingle();
-          if (after && new Date(after.locked_until).getTime() > Date.now() && after.owner !== owner) {
+          if (!acquired) {
             return { name, skipped: true, reason: 'locked' } as any;
           }
         } catch {
@@ -159,8 +150,8 @@ router.post('/run', requireApiSecret(), async (req: Request, res: Response) => {
             concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
           });
         } finally {
-          // Release lock early to shorten contention
-          try { await supa.from('run_locks').delete().eq('lock_key', lock_key); } catch { /* ignore */ }
+          // Release lock only if we own it
+          try { await supa.rpc('release_run_lock', { p_lock_key: lock_key, p_owner: owner }); } catch { /* ignore */ }
         }
         // Heuristic tuning of target_max_pages based on yield
         try {
@@ -200,25 +191,66 @@ router.post('/run', requireApiSecret(), async (req: Request, res: Response) => {
         } catch { /* ignore */ }
         return { name, requestedMaxPages: regionMaxPages, ...regionResult };
       }));
-      const regionResults = await Promise.all(perRegionTasks);
-      const inserted = regionResults.reduce((s, r) => s + (r.inserted || 0), 0);
-      const discovered = regionResults.reduce((s, r) => s + (r.discovered || 0), 0);
-      const errorsAgg = regionResults.flatMap(r => (r.errors || []).map((e: string) => `${r.name}: ${e}`));
-      return res.json({ status: 'ok', inserted, discovered, regions: regionResults, errors: errorsAgg, adapters: engine.listAdapters() });
+      if (respondQuick) {
+        // Fire-and-forget to avoid upstream 524 timeouts
+        (async () => {
+          try {
+            const regionResults = await Promise.all(perRegionTasks);
+            const inserted = regionResults.reduce((s, r) => s + (r.inserted || 0), 0);
+            const discovered = regionResults.reduce((s, r) => s + (r.discovered || 0), 0);
+            const errorsAgg = regionResults.flatMap(r => (r.errors || []).map((e: string) => `${r.name}: ${e}`));
+            // eslint-disable-next-line no-console
+            console.log('[scrape.run][bg] done', { adapterName, inserted, discovered, errors: errorsAgg.slice(0, 5) });
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error('[scrape.run][bg] failed', e);
+          }
+        })();
+        return res.status(202).json({ status: 'accepted', queued: true, adapter: adapterName });
+      } else {
+        const regionResults = await Promise.all(perRegionTasks);
+        const inserted = regionResults.reduce((s, r) => s + (r.inserted || 0), 0);
+        const discovered = regionResults.reduce((s, r) => s + (r.discovered || 0), 0);
+        const errorsAgg = regionResults.flatMap(r => (r.errors || []).map((e: string) => `${r.name}: ${e}`));
+        return res.json({ status: 'ok', inserted, discovered, regions: regionResults, errors: errorsAgg, adapters: engine.listAdapters() });
+      }
     }
 
     // Single-run path (no regions[] provided)
-    const results = await engine.run({
-      adapterName,
-      maxPages,
-      maxUrls,
-      requestTimeoutMs,
-      discoveryTimeoutMs,
-      extraStartUrls: Array.isArray(body.startUrls) ? body.startUrls : [],
-      extraListingType: (body as any).listingType as 'buy' | 'rent' | undefined,
-      concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
-    });
-    res.json({ status: 'ok', ...results, adapters: engine.listAdapters() });
+    if (respondQuick) {
+      (async () => {
+        try {
+          const results = await engine.run({
+            adapterName,
+            maxPages,
+            maxUrls,
+            requestTimeoutMs,
+            discoveryTimeoutMs,
+            extraStartUrls: Array.isArray(body.startUrls) ? body.startUrls : [],
+            extraListingType: (body as any).listingType as 'buy' | 'rent' | undefined,
+            concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
+          });
+          // eslint-disable-next-line no-console
+          console.log('[scrape.run][bg-single] done', { adapterName, inserted: results.inserted, discovered: results.discovered });
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error('[scrape.run][bg-single] failed', e);
+        }
+      })();
+      return res.status(202).json({ status: 'accepted', queued: true, adapter: adapterName });
+    } else {
+      const results = await engine.run({
+        adapterName,
+        maxPages,
+        maxUrls,
+        requestTimeoutMs,
+        discoveryTimeoutMs,
+        extraStartUrls: Array.isArray(body.startUrls) ? body.startUrls : [],
+        extraListingType: (body as any).listingType as 'buy' | 'rent' | undefined,
+        concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
+      });
+      res.json({ status: 'ok', ...results, adapters: engine.listAdapters() });
+    }
   } catch (err: any) {
     // eslint-disable-next-line no-console
     console.error('POST /api/scrape/run error', err);
@@ -248,10 +280,9 @@ router.post('/benchmarks/refresh', requireApiSecret(), async (req: Request, res:
 
 export default router;
 
-// Seed endpoint: parse & upsert specific listing URLs (debugging discovery)
 router.post('/seed', requireApiSecret(), async (req: Request, res: Response) => {
   try {
-    const { adapterName, urls } = (req.body || {}) as { adapterName?: string; urls?: string[] };
+    const { adapterName, urls, respondQuick } = (req.body || {}) as { adapterName?: string; urls?: string[]; respondQuick?: boolean };
     if (!adapterName) return res.status(400).json({ error: 'adapterName is required' });
     if (!Array.isArray(urls) || urls.length === 0) return res.status(400).json({ error: 'urls[] is required' });
 

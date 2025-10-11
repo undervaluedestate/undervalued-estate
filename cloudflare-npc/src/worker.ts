@@ -46,12 +46,13 @@ export default {
         adapterName: 'NigeriaPropertyCentre',
         regions: group,
         regionConcurrency: 6,
-        concurrency: 3,
-        maxPages: 2,
-        maxUrls: 50,
-        requestTimeoutMs: 20000,
-        discoveryTimeoutMs: 15000,
-        listingType: doRent ? 'rent' : 'buy'
+        concurrency: 2,
+        maxPages: 1,
+        maxUrls: 30,
+        requestTimeoutMs: 18000,
+        discoveryTimeoutMs: 12000,
+        listingType: doRent ? 'rent' : 'buy',
+        respondQuick: true
       };
       const res = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
       const txt = await res.text();

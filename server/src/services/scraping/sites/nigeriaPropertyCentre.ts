@@ -726,13 +726,20 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       }
     }
 
+    // Currency: use exactly what listing shows; NPC is NGN, but detect symbols explicitly
+    let currency: string = 'NGN';
+    try {
+      const priceLabel = pickText($('.price, .price-label, [itemprop="price"], .amount')) || bodyText;
+      if (/₦|\bNGN\b|naira/i.test(String(priceLabel))) currency = 'NGN';
+    } catch { /* default NGN */ }
+
     return {
       external_id,
       url,
       title,
       description: $('meta[name="description"]').attr('content') || null,
       price: priceNum,
-      currency: 'NGN',
+      currency,
       size: sizeMatch ? sizeMatch[0] : undefined,
       bedrooms: bedMatch ? Number(bedMatch[1]) : undefined,
       bathrooms: bathMatch ? Number(bathMatch[1]) : undefined,

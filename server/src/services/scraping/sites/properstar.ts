@@ -293,13 +293,21 @@ export class ProperstarAdapter extends BaseAdapter {
       }
     }
 
-    // Currency normalization for Nigeria: convert GBP -> NGN using FX rate
-    if (country === 'Nigeria' && currency === 'GBP' && typeof priceNum === 'number') {
-      try {
-        const rate = await getFxRate('GBP', 'NGN');
-        priceNum = Math.round(priceNum * rate);
-        currency = 'NGN';
-      } catch {/* ignore FX failure; keep original */}
+    // Currency: use exactly what listing shows. Prefer JSON-LD offers.priceCurrency; fallback to symbol detection.
+    if (!currency) {
+      // Try common JSON-LD patterns already parsed above (offers->priceCurrency). If not captured, infer from symbols.
+      const priceLabel = pickText($('[data-testid="price"], .price, .pricetag, [itemprop="price"]')) || $('body').text();
+      if (/£|GBP/i.test(String(priceLabel))) currency = 'GBP';
+      else if (/₦|NGN|naira/i.test(String(priceLabel))) currency = 'NGN';
+      else if (/€|EUR/i.test(String(priceLabel))) currency = 'EUR';
+      else if (/\$|USD/i.test(String(priceLabel))) currency = 'USD';
+      // Fallback by site TLD/context
+      if (!currency) {
+        try {
+          const u0 = new URL(url);
+          if (u0.hostname.endsWith('.co.uk')) currency = 'GBP';
+        } catch { /* ignore */ }
+      }
     }
 
     return {
