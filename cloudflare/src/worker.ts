@@ -106,28 +106,7 @@ const NPC_REGIONS: RegionDef[] = [
 
 // Properstar (Nigeria) regions as full URLs (buy flats)
 type PRegion = { name: string; startUrls: string[] };
-const PROPERSTAR_REGIONS: PRegion[] = [
-  { name: 'Lagos', startUrls: ['https://www.properstar.co.uk/nigeria/lagos/buy/flat'] },
-  { name: 'Abuja', startUrls: ['https://www.properstar.co.uk/nigeria/abuja/buy/flat'] },
-  { name: 'Port-Harcourt', startUrls: ['https://www.properstar.co.uk/nigeria/port-harcourt/buy/flat'] },
-  { name: 'Ibadan', startUrls: ['https://www.properstar.co.uk/nigeria/ibadan/buy/flat'] },
-  { name: 'Enugu', startUrls: ['https://www.properstar.co.uk/nigeria/enugu/buy/flat'] },
-  { name: 'Benin-City', startUrls: ['https://www.properstar.co.uk/nigeria/benin-city/buy/flat'] },
-  { name: 'Kano', startUrls: ['https://www.properstar.co.uk/nigeria/kano/buy/flat'] },
-  { name: 'Kaduna', startUrls: ['https://www.properstar.co.uk/nigeria/kaduna/buy/flat'] },
-  { name: 'Asaba', startUrls: ['https://www.properstar.co.uk/nigeria/asaba/buy/flat'] },
-  { name: 'Warri', startUrls: ['https://www.properstar.co.uk/nigeria/warri/buy/flat'] },
-  { name: 'Uyo', startUrls: ['https://www.properstar.co.uk/nigeria/uyo/buy/flat'] },
-  { name: 'Calabar', startUrls: ['https://www.properstar.co.uk/nigeria/calabar/buy/flat'] },
-  { name: 'Owerri', startUrls: ['https://www.properstar.co.uk/nigeria/owerri/buy/flat'] },
-  { name: 'Onitsha', startUrls: ['https://www.properstar.co.uk/nigeria/onitsha/buy/flat'] },
-  { name: 'Akure', startUrls: ['https://www.properstar.co.uk/nigeria/akure/buy/flat'] },
-  { name: 'Ilorin', startUrls: ['https://www.properstar.co.uk/nigeria/ilorin/buy/flat'] },
-  { name: 'Jos', startUrls: ['https://www.properstar.co.uk/nigeria/jos/buy/flat'] },
-  { name: 'Osogbo', startUrls: ['https://www.properstar.co.uk/nigeria/osogbo/buy/flat'] },
-  { name: 'Abeokuta', startUrls: ['https://www.properstar.co.uk/nigeria/abeokuta/buy/flat'] },
-  { name: 'Sokoto', startUrls: ['https://www.properstar.co.uk/nigeria/sokoto/buy/flat'] }
-];
+const PROPERSTAR_REGIONS: PRegion[] = [];
 
 // Properstar UK regions (buy flats) including Aberdeen, Glasgow, Edinburgh
 const PROPERSTAR_UK_REGIONS: PRegion[] = [
@@ -165,15 +144,19 @@ export default {
       'Authorization': `Bearer ${API_SECRET}`,
     } as const;
 
-    const hour = new Date().getUTCHours();
+    const now = new Date();
+    const hour = now.getUTCHours();
+    const minute = now.getUTCMinutes();
+    const doRent = (minute % 30) >= 15; // :00/:30 => buy, :15/:45 => rent
     const regionSeeds = hour % 2 === 0 ? UK_SEEDS : NIGERIA_SEEDS;
 
     try {
       // Helper: chunk an array
       const chunk = <T,>(arr: T[], size: number) => arr.reduce((acc: T[][], _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), [] as T[][]);
 
-      // 1) NPC multi-region fan-out (40+ regions)
-      const npcChunks = chunk(NPC_REGIONS, 10); // 4–5 backend calls instead of 1 huge call
+      // 1) NPC multi-region fan-out (40+ regions). Convert to rent paths if doRent
+      const npcRegionsEff = NPC_REGIONS.map(r => doRent ? ({ name: r.name.replace('Lagos', 'Lagos'), paths: r.paths.map(p => p.replace('/for-sale/', '/for-rent/')) }) : r);
+      const npcChunks = chunk(npcRegionsEff, 10); // 4–5 backend calls instead of 1 huge call
       for (const [i, group] of npcChunks.entries()) {
         const npcBody = {
           adapterName: 'NigeriaPropertyCentre',
@@ -183,15 +166,17 @@ export default {
           maxPages: 2,
           maxUrls: 50,
           requestTimeoutMs: 20000,
-          discoveryTimeoutMs: 15000
+          discoveryTimeoutMs: 15000,
+          listingType: doRent ? 'rent' : 'buy'
         };
         const npcRes = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(npcBody) });
         const npcTxt = await npcRes.text();
-        console.log(`[scheduled] NPC group ${i+1}/${npcChunks.length}:`, npcRes.status, npcTxt.slice(0, 200));
+        console.log(`[scheduled] NPC ${doRent ? 'RENT' : 'BUY'} group ${i+1}/${npcChunks.length}:`, npcRes.status, npcTxt.slice(0, 200));
       }
 
-      // 2) Properstar multi-region fan-out (Nigeria focus)
-      const psChunks = chunk(PROPERSTAR_REGIONS, 10);
+      // 2) Properstar multi-region fan-out (Nigeria focus). Convert to rent URLs if doRent
+      const psRegionsEff = PROPERSTAR_REGIONS.map(r => doRent ? ({ name: r.name, startUrls: r.startUrls.map(u => u.replace('/buy/', '/rent/')) }) : r);
+      const psChunks = chunk(psRegionsEff, 10);
       for (const [i, group] of psChunks.entries()) {
         const body = {
           adapterName: 'Properstar',
@@ -202,15 +187,16 @@ export default {
           maxUrls: 30,
           requestTimeoutMs: 18000,
           discoveryTimeoutMs: 12000,
-          listingType: 'buy'
+          listingType: doRent ? 'rent' : 'buy'
         };
         const res2 = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
         const txt2 = await res2.text();
-        console.log(`[scheduled] Properstar group ${i+1}/${psChunks.length}:`, res2.status, txt2.slice(0, 200));
+        console.log(`[scheduled] Properstar NG ${doRent ? 'RENT' : 'BUY'} group ${i+1}/${psChunks.length}:`, res2.status, txt2.slice(0, 200));
       }
 
-      // 2b) Properstar multi-region fan-out (UK focus)
-      const ukChunks = chunk(PROPERSTAR_UK_REGIONS, 10);
+      // 2b) Properstar multi-region fan-out (UK focus). Convert to rent URLs if doRent
+      const ukRegionsEff = PROPERSTAR_UK_REGIONS.map(r => doRent ? ({ name: r.name, startUrls: r.startUrls.map(u => u.replace('/buy/', '/rent/')) }) : r);
+      const ukChunks = chunk(ukRegionsEff, 10);
       for (const [i, group] of ukChunks.entries()) {
         const body = {
           adapterName: 'Properstar',
@@ -221,11 +207,11 @@ export default {
           maxUrls: 30,
           requestTimeoutMs: 18000,
           discoveryTimeoutMs: 12000,
-          listingType: 'buy'
+          listingType: doRent ? 'rent' : 'buy'
         };
         const res3 = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
         const txt3 = await res3.text();
-        console.log(`[scheduled] Properstar UK group ${i+1}/${ukChunks.length}:`, res3.status, txt3.slice(0, 200));
+        console.log(`[scheduled] Properstar UK ${doRent ? 'RENT' : 'BUY'} group ${i+1}/${ukChunks.length}:`, res3.status, txt3.slice(0, 200));
       }
 
       // 3) Benchmarks refresh

@@ -4,6 +4,7 @@ import { getAdminClient } from '../utils/supabase';
 import { ScrapeEngine } from '../services/scraping/engine';
 import { NigeriaPropertyCentreAdapter } from '../services/scraping/sites/nigeriaPropertyCentre';
 import { ProperstarAdapter } from 'services/scraping/sites/properstar';
+import { ZooplaAdapter } from '../services/scraping/sites/zoopla';
 import { getText } from '../services/scraping/http';
 import { normalizeToProperty } from '../services/scraping/normalize';
 
@@ -52,7 +53,7 @@ router.post('/run', requireApiSecret(), async (req: Request, res: Response) => {
 
     const effectiveDryRun = (String((req.query as any).dryRun || '').toLowerCase() === 'true') || Boolean(dryRun);
     const engine = new ScrapeEngine({
-      adapters: [new NigeriaPropertyCentreAdapter(), new ProperstarAdapter()],
+      adapters: [new NigeriaPropertyCentreAdapter(), new ProperstarAdapter(), new ZooplaAdapter()],
       concurrency: typeof body.concurrency === 'number' && body.concurrency > 0 ? Math.min(10, Math.max(1, Math.floor(body.concurrency))) : 6,
     });
 
@@ -75,23 +76,99 @@ router.post('/run', requireApiSecret(), async (req: Request, res: Response) => {
       };
       const pLimit = (await import('p-limit')).default as any;
       const limit = pLimit(Math.min(10, Math.max(1, Number(body.regionConcurrency) || 5)));
+      const supa = getAdminClient();
       const perRegionTasks = regions.map((r, idx) => limit(async () => {
         const name = typeof r === 'string' ? r : (r.name || `region_${idx+1}`);
+        const lock_key = `${adapterName}:${name}`;
+        const owner = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const lockForMs = 15 * 60 * 1000; // 15 minutes
+        // Try to acquire lock
+        try {
+          const nowIso = new Date().toISOString();
+          const untilIso = new Date(Date.now() + lockForMs).toISOString();
+          // Remove expired lock if present
+          await supa.from('run_locks').delete().lt('locked_until', nowIso).eq('lock_key', lock_key);
+          const { data: existing } = await supa.from('run_locks').select('locked_until').eq('lock_key', lock_key).maybeSingle();
+          if (existing && new Date(existing.locked_until).getTime() > Date.now()) {
+            return { name, skipped: true, reason: 'locked' } as any;
+          }
+          const { error: lockErr } = await supa.from('run_locks').upsert({ lock_key, locked_until: untilIso, owner }).select('*').single();
+          if (lockErr) {
+            return { name, skipped: true, reason: 'lock_failed' } as any;
+          }
+        } catch {
+          // non-fatal; proceed without lock
+        }
         const startUrls: string[] = Array.isArray((r as any).startUrls) && (r as any).startUrls!.length
           ? (r as any).startUrls!
           : (Array.isArray((r as any).paths) && (r as any).paths!.length ? (r as any).paths! : [String(r)]);
         const absStartUrls = startUrls.map(toAbsolute);
-        const regionResult = await engine.run({
-          adapterName,
-          maxPages,
-          maxUrls,
-          requestTimeoutMs,
-          discoveryTimeoutMs,
-          extraStartUrls: absStartUrls,
-          extraListingType: (body as any).listingType as 'buy' | 'rent' | undefined,
-          concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
-        });
-        return { name, ...regionResult };
+        // Read current crawl_state target_max_pages if any
+        let regionMaxPages = maxPages;
+        try {
+          const { data: cs } = await supa
+            .from('crawl_state')
+            .select('target_max_pages, low_yield_streak')
+            .eq('adapter_name', adapterName)
+            .eq('region', name)
+            .maybeSingle();
+          if (cs && typeof cs.target_max_pages === 'number' && cs.target_max_pages > 0) {
+            regionMaxPages = Math.min(10, Math.max(1, cs.target_max_pages));
+          }
+        } catch { /* ignore */ }
+        let regionResult;
+        try {
+          regionResult = await engine.run({
+            adapterName,
+            maxPages: regionMaxPages,
+            maxUrls,
+            requestTimeoutMs,
+            discoveryTimeoutMs,
+            extraStartUrls: absStartUrls,
+            extraListingType: (body as any).listingType as 'buy' | 'rent' | undefined,
+            concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
+          });
+        } finally {
+          // Release lock early to shorten contention
+          try { await supa.from('run_locks').delete().eq('lock_key', lock_key); } catch { /* ignore */ }
+        }
+        // Heuristic tuning of target_max_pages based on yield
+        try {
+          const inserted = Number(regionResult.inserted || 0);
+          const discovered = Number(regionResult.discovered || 0);
+          // Fetch current state to get streak
+          const { data: cur } = await supa
+            .from('crawl_state')
+            .select('target_max_pages, low_yield_streak')
+            .eq('adapter_name', adapterName)
+            .eq('region', name)
+            .maybeSingle();
+          let target = regionMaxPages;
+          let streak = Number(cur?.low_yield_streak || 0);
+          if (inserted > 0) {
+            streak = 0;
+          } else {
+            streak = Math.min(10, streak + 1);
+          }
+          // Increase when high yield; decrease when repeated zero-yield
+          if (inserted >= 10 || discovered >= regionMaxPages * 20) {
+            target = Math.min(5, target + 1);
+          } else if (inserted === 0 && streak >= 2) {
+            target = Math.max(1, target - 1);
+          }
+          await supa
+            .from('crawl_state')
+            .upsert({
+              adapter_name: adapterName,
+              region: name,
+              target_max_pages: target,
+              last_discovered: discovered,
+              last_inserted: inserted,
+              low_yield_streak: streak,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'adapter_name,region' });
+        } catch { /* ignore */ }
+        return { name, requestedMaxPages: regionMaxPages, ...regionResult };
       }));
       const regionResults = await Promise.all(perRegionTasks);
       const inserted = regionResults.reduce((s, r) => s + (r.inserted || 0), 0);
@@ -148,7 +225,7 @@ router.post('/seed', requireApiSecret(), async (req: Request, res: Response) => 
     if (!adapterName) return res.status(400).json({ error: 'adapterName is required' });
     if (!Array.isArray(urls) || urls.length === 0) return res.status(400).json({ error: 'urls[] is required' });
 
-    const adapters = [new NigeriaPropertyCentreAdapter(), new ProperstarAdapter()];
+    const adapters = [new NigeriaPropertyCentreAdapter(), new ProperstarAdapter(), new ZooplaAdapter()];
     const adapter = adapters.find(a => a.getMeta().name === adapterName);
     if (!adapter) return res.status(400).json({ error: `Unknown adapter ${adapterName}` });
 

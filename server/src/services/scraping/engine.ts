@@ -68,7 +68,8 @@ export class ScrapeEngine {
         // Attempt to auto-create source with a sane base_url if adapter is known
         const defaultBaseUrlMap: Record<string, string> = {
           'NigeriaPropertyCentre': 'https://nigeriapropertycentre.com/',
-          'Properstar': 'https://www.properstar.co.uk/'
+          'Properstar': 'https://www.properstar.co.uk/',
+          'Zoopla': 'https://www.zoopla.co.uk/'
         };
         const base_url = defaultBaseUrlMap[meta.name];
         if (!base_url) {
@@ -124,8 +125,60 @@ export class ScrapeEngine {
           if (!canonicalToUrl.has(u)) canonicalToUrl.set(u, u);
         }
       }
-      const uniqueUrls = Array.from(canonicalToUrl.values());
+      let uniqueUrls = Array.from(canonicalToUrl.values());
       totalDiscovered += uniqueUrls.length;
+
+      // Pre-check: derive external_id from URL and skip recently seen listings (stop-on-known optimization)
+      try {
+        const deriveId = (u: string): string | null => {
+          try {
+            const pu = new URL(u);
+            if (meta.name === 'NigeriaPropertyCentre') {
+              const segs = pu.pathname.split('/').filter(Boolean);
+              return segs[segs.length - 1] || null;
+            }
+            if (meta.name === 'Properstar') {
+              const m = pu.pathname.match(/\/listing\/([A-Za-z0-9_-]+)/i);
+              return m && m[1] ? m[1] : null;
+            }
+          } catch { /* ignore */ }
+          return null;
+        };
+        const ids: string[] = [];
+        const idToUrl = new Map<string, string>();
+        for (const u of uniqueUrls) {
+          const id = deriveId(u);
+          if (id) { ids.push(id); idToUrl.set(id, u); }
+        }
+        if (ids.length) {
+          const CHUNK = 200;
+          const now = Date.now();
+          const keepUrls = new Set<string>();
+          for (let i = 0; i < ids.length; i += CHUNK) {
+            const slice = ids.slice(i, i + CHUNK);
+            const { data, error } = await admin.from('properties')
+              .select('external_id,last_seen_at')
+              .eq('source_id', (source as any).id)
+              .in('external_id', slice);
+            if (error) continue;
+            const recent = new Set<string>();
+            for (const row of data || []) {
+              const ls = row.last_seen_at ? new Date(row.last_seen_at).getTime() : 0;
+              if (ls && (now - ls) < 12 * 60 * 60 * 1000) { // 12h freshness window
+                recent.add(row.external_id);
+              }
+            }
+            for (const eid of slice) {
+              if (!recent.has(eid)) {
+                const u = idToUrl.get(eid);
+                if (u) keepUrls.add(u);
+              }
+            }
+          }
+          // If no DB rows found (all new), keep original; otherwise filter to keepUrls
+          if (keepUrls.size > 0) uniqueUrls = uniqueUrls.filter((u) => keepUrls.has(u));
+        }
+      } catch { /* best-effort */ }
 
       // Utility sleep
       const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

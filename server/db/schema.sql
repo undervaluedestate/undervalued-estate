@@ -75,6 +75,16 @@ end$$;
 create index if not exists idx_current_rent_benchmarks_area on public.current_rent_benchmarks (country, state, city, neighborhood);
 create index if not exists idx_current_rent_benchmarks_type on public.current_rent_benchmarks (property_type);
 
+-- =========================
+-- Run Locks: simple distributed lock for worker fan-out
+-- =========================
+create table if not exists public.run_locks (
+  lock_key text primary key,
+  locked_until timestamptz not null,
+  owner text,
+  created_at timestamptz not null default now()
+);
+
 do $$
 begin
   if not exists (select 1 from pg_type where typname = 'deal_class_enum') then
@@ -469,6 +479,20 @@ where p.is_active = true;
 grant select on public.current_benchmarks to anon, authenticated;
 grant select on public.v_properties_with_deal to anon, authenticated;
 grant select on public.v_search_results to anon, authenticated;
+
+-- =========================
+-- Crawl State: per-region/page tuning
+-- =========================
+create table if not exists public.crawl_state (
+  adapter_name text not null,
+  region text not null,
+  target_max_pages int not null default 1,
+  last_discovered int,
+  last_inserted int,
+  low_yield_streak int not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (adapter_name, region)
+);
 
 -- =========================
 -- Benchmark Refresh Function
