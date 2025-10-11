@@ -18,9 +18,10 @@ router.get('/', async (req: Request, res: Response) => {
       min_size_sqm,
       max_size_sqm,
       min_pct_below, // positive number like 10 means <= -10%
+      deal_type, // 'slightly_undervalued' | 'strongly_undervalued' | 'rare_deal'
       page = '1',
       per_page = '20',
-      sort = 'pct_vs_market',
+      sort = 'final_pct_vs_market',
       order = 'asc',
     } = req.query as Record<string, string | undefined>;
 
@@ -39,7 +40,13 @@ router.get('/', async (req: Request, res: Response) => {
     if (max_size_sqm && !Number.isNaN(Number(max_size_sqm))) query = query.lte('size_sqm', Number(max_size_sqm));
 
     if (min_pct_below) {
-      query = query.lte('pct_vs_market', -Math.abs(Number(min_pct_below)));
+      // Use feature-aware metric when available
+      query = query.lte('final_pct_vs_market', -Math.abs(Number(min_pct_below)));
+    }
+
+    if (deal_type) {
+      // Filter by final_deal_class, which prefers feature-aware classification
+      query = query.eq('final_deal_class', deal_type);
     }
 
     if (q) {
@@ -60,9 +67,9 @@ router.get('/', async (req: Request, res: Response) => {
     const to = from + perPageNum - 1;
 
     const allowedSort = new Set([
-      'pct_vs_market', 'price', 'size_sqm', 'price_per_sqm', 'scraped_at'
+      'final_pct_vs_market', 'pct_vs_market', 'price', 'size_sqm', 'price_per_sqm', 'scraped_at'
     ]);
-    const sortKey = allowedSort.has(String(sort)) ? String(sort) : 'pct_vs_market';
+    const sortKey = allowedSort.has(String(sort)) ? String(sort) : 'final_pct_vs_market';
     const ord = String(order) === 'desc' ? false : true;
     query = query.order(sortKey as any, { ascending: ord, nullsFirst: true }).range(from, to);
 

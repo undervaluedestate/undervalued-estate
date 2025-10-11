@@ -76,6 +76,120 @@ create index if not exists idx_current_rent_benchmarks_area on public.current_re
 create index if not exists idx_current_rent_benchmarks_type on public.current_rent_benchmarks (property_type);
 
 -- =========================
+-- Feature-aware Benchmarks (Materialized Views)
+-- Buckets by bedrooms and bathrooms for like-for-like comparisons
+-- =========================
+do $$
+begin
+  if not exists (select 1 from pg_matviews where matviewname = 'current_benchmarks_features') then
+    create materialized view public.current_benchmarks_features as
+    with base as (
+      select
+        coalesce(country,'') as country,
+        coalesce(state,'') as state,
+        coalesce(city,'') as city,
+        coalesce(neighborhood,'') as neighborhood,
+        property_type,
+        listing_type,
+        currency,
+        case
+          when bedrooms is null then null
+          when bedrooms >= 4 then 4
+          else bedrooms
+        end as bed_bucket,
+        case
+          when bathrooms is null then null
+          when bathrooms >= 3 then 3
+          else bathrooms
+        end as bath_bucket,
+        price_per_sqm
+      from public.properties
+      where is_active = true
+        and price_per_sqm is not null
+        and listing_type = 'buy'::property_listing_type_enum
+    )
+    , ranked as (
+      select
+        country, state, city, neighborhood, property_type, listing_type, currency,
+        bed_bucket, bath_bucket,
+        now()::date as computed_on,
+        round(avg(price_per_sqm)::numeric, 2) as avg_price_per_sqm,
+        round(percentile_cont(0.25) within group (order by price_per_sqm)::numeric, 2) as p25_price_per_sqm,
+        round(percentile_cont(0.50) within group (order by price_per_sqm)::numeric, 2) as p50_price_per_sqm,
+        round(percentile_cont(0.75) within group (order by price_per_sqm)::numeric, 2) as p75_price_per_sqm,
+        count(*)::int as sample_count,
+        row_number() over (
+          partition by country, state, city, neighborhood, property_type, listing_type, currency, bed_bucket, bath_bucket
+          order by now() desc
+        ) as rn
+      from base
+      group by country, state, city, neighborhood, property_type, listing_type, currency, bed_bucket, bath_bucket
+    )
+    select * from ranked where rn = 1;
+  else
+    refresh materialized view public.current_benchmarks_features;
+  end if;
+end$$;
+
+create index if not exists idx_cb_features_area on public.current_benchmarks_features (country, state, city, neighborhood);
+create index if not exists idx_cb_features_dims on public.current_benchmarks_features (property_type, listing_type, currency, bed_bucket, bath_bucket);
+
+do $$
+begin
+  if not exists (select 1 from pg_matviews where matviewname = 'current_rent_benchmarks_features') then
+    create materialized view public.current_rent_benchmarks_features as
+    with base as (
+      select
+        coalesce(country,'') as country,
+        coalesce(state,'') as state,
+        coalesce(city,'') as city,
+        coalesce(neighborhood,'') as neighborhood,
+        property_type,
+        listing_type,
+        currency,
+        case
+          when bedrooms is null then null
+          when bedrooms >= 4 then 4
+          else bedrooms
+        end as bed_bucket,
+        case
+          when bathrooms is null then null
+          when bathrooms >= 3 then 3
+          else bathrooms
+        end as bath_bucket,
+        price_per_sqm
+      from public.properties
+      where is_active = true
+        and price_per_sqm is not null
+        and listing_type = 'rent'::property_listing_type_enum
+    )
+    , ranked as (
+      select
+        country, state, city, neighborhood, property_type, listing_type, currency,
+        bed_bucket, bath_bucket,
+        now()::date as computed_on,
+        round(avg(price_per_sqm)::numeric, 2) as avg_price_per_sqm,
+        round(percentile_cont(0.25) within group (order by price_per_sqm)::numeric, 2) as p25_price_per_sqm,
+        round(percentile_cont(0.50) within group (order by price_per_sqm)::numeric, 2) as p50_price_per_sqm,
+        round(percentile_cont(0.75) within group (order by price_per_sqm)::numeric, 2) as p75_price_per_sqm,
+        count(*)::int as sample_count,
+        row_number() over (
+          partition by country, state, city, neighborhood, property_type, listing_type, currency, bed_bucket, bath_bucket
+          order by now() desc
+        ) as rn
+      from base
+      group by country, state, city, neighborhood, property_type, listing_type, currency, bed_bucket, bath_bucket
+    )
+    select * from ranked where rn = 1;
+  else
+    refresh materialized view public.current_rent_benchmarks_features;
+  end if;
+end$$;
+
+create index if not exists idx_crb_features_area on public.current_rent_benchmarks_features (country, state, city, neighborhood);
+create index if not exists idx_crb_features_dims on public.current_rent_benchmarks_features (property_type, listing_type, currency, bed_bucket, bath_bucket);
+
+-- =========================
 -- Run Locks: simple distributed lock for worker fan-out
 -- =========================
 create table if not exists public.run_locks (
@@ -458,6 +572,13 @@ select
   v.market_avg_price_per_sqm,
   v.pct_vs_market,
   v.deal_class,
+  vf.pct_vs_market_featured,
+  vf.deal_class_featured,
+  coalesce(vf.pct_vs_market_featured, v.pct_vs_market) as final_pct_vs_market,
+  case
+    when vf.deal_class_featured is not null and vf.deal_class_featured <> 'none'::deal_class_enum then vf.deal_class_featured
+    else v.deal_class
+  end as final_deal_class,
   rb.avg_price_per_sqm as rent_avg_price_per_sqm,
   case
     when p.listing_type = 'buy'::property_listing_type_enum
@@ -474,6 +595,30 @@ left join public.current_rent_benchmarks rb
  and coalesce(rb.city, '') = coalesce(p.city, '')
  and coalesce(rb.neighborhood, '') = coalesce(p.neighborhood, '')
  and rb.property_type = p.property_type
+left join (
+  select
+    p2.id,
+    case when cbf.avg_price_per_sqm is not null and p2.size_sqm is not null and p2.size_sqm > 0 and p2.price_per_sqm is not null
+      then round( (p2.price_per_sqm - cbf.avg_price_per_sqm) / nullif(cbf.avg_price_per_sqm,0) * 100.0, 2)
+    end as pct_vs_market_featured,
+    case
+      when cbf.avg_price_per_sqm is not null and p2.price_per_sqm is not null and p2.price_per_sqm <= 0.7 * cbf.avg_price_per_sqm then 'rare_deal'::deal_class_enum
+      when cbf.avg_price_per_sqm is not null and p2.price_per_sqm is not null and p2.price_per_sqm <= 0.8 * cbf.avg_price_per_sqm then 'strongly_undervalued'::deal_class_enum
+      when cbf.avg_price_per_sqm is not null and p2.price_per_sqm is not null and p2.price_per_sqm <= 0.9 * cbf.avg_price_per_sqm then 'slightly_undervalued'::deal_class_enum
+      else 'none'::deal_class_enum
+    end as deal_class_featured
+  from public.properties p2
+  left join public.current_benchmarks_features cbf
+    on cbf.country = coalesce(p2.country, cbf.country)
+   and coalesce(cbf.state, '') = coalesce(p2.state, '')
+   and coalesce(cbf.city, '') = coalesce(p2.city, '')
+   and coalesce(cbf.neighborhood, '') = coalesce(p2.neighborhood, '')
+   and cbf.property_type = p2.property_type
+   and cbf.listing_type = p2.listing_type
+   and cbf.currency = p2.currency
+   and cbf.bed_bucket = (case when p2.bedrooms is null then null when p2.bedrooms >= 4 then 4 else p2.bedrooms end)
+   and cbf.bath_bucket = (case when p2.bathrooms is null then null when p2.bathrooms >= 3 then 3 else p2.bathrooms end)
+) vf on vf.id = p.id
 where p.is_active = true;
 
 grant select on public.current_benchmarks to anon, authenticated;
@@ -546,6 +691,18 @@ begin
     refresh materialized view concurrently public.current_benchmarks;
   exception when feature_not_supported then
     refresh materialized view public.current_benchmarks;
+  end;
+
+  -- Refresh feature-aware materialized views as part of the same job
+  begin
+    refresh materialized view concurrently public.current_benchmarks_features;
+  exception when feature_not_supported then
+    refresh materialized view public.current_benchmarks_features;
+  end;
+  begin
+    refresh materialized view concurrently public.current_rent_benchmarks_features;
+  exception when feature_not_supported then
+    refresh materialized view public.current_rent_benchmarks_features;
   end;
 end
 $$;

@@ -27,6 +27,7 @@ type FiltersState = {
   min_size_sqm: string;
   max_size_sqm: string;
   min_pct_below: string;
+  deal_type: string;
   sort: string;
   order: string;
 };
@@ -45,7 +46,8 @@ export default function App(){
     min_size_sqm: '',
     max_size_sqm: '',
     min_pct_below: '',
-    sort: 'pct_vs_market',
+    deal_type: '',
+    sort: 'final_pct_vs_market',
     order: 'asc',
   });
   const [results, setResults] = useState<any[]>([]);
