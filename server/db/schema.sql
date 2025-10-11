@@ -533,7 +533,14 @@ begin
     and (target_city is null or city = target_city)
     and (target_neighborhood is null or neighborhood = target_neighborhood)
     and (target_property_type is null or property_type = target_property_type)
-  group by country, state, city, neighborhood, property_type, currency;
+  group by country, state, city, neighborhood, property_type, currency
+  on conflict (country, state, city, neighborhood, property_type, currency, computed_on)
+  do update set
+    avg_price_per_sqm = excluded.avg_price_per_sqm,
+    p25_price_per_sqm = excluded.p25_price_per_sqm,
+    p50_price_per_sqm = excluded.p50_price_per_sqm,
+    p75_price_per_sqm = excluded.p75_price_per_sqm,
+    sample_count = excluded.sample_count;
 
   begin
     refresh materialized view concurrently public.current_benchmarks;

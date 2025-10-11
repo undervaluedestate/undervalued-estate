@@ -174,46 +174,6 @@ export default {
         console.log(`[scheduled] NPC ${doRent ? 'RENT' : 'BUY'} group ${i+1}/${npcChunks.length}:`, npcRes.status, npcTxt.slice(0, 200));
       }
 
-      // 2) Properstar multi-region fan-out (Nigeria focus). Convert to rent URLs if doRent
-      const psRegionsEff = PROPERSTAR_REGIONS.map(r => doRent ? ({ name: r.name, startUrls: r.startUrls.map(u => u.replace('/buy/', '/rent/')) }) : r);
-      const psChunks = chunk(psRegionsEff, 10);
-      for (const [i, group] of psChunks.entries()) {
-        const body = {
-          adapterName: 'Properstar',
-          regions: group,
-          regionConcurrency: 6,
-          concurrency: 2,
-          maxPages: 1,
-          maxUrls: 30,
-          requestTimeoutMs: 18000,
-          discoveryTimeoutMs: 12000,
-          listingType: doRent ? 'rent' : 'buy'
-        };
-        const res2 = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
-        const txt2 = await res2.text();
-        console.log(`[scheduled] Properstar NG ${doRent ? 'RENT' : 'BUY'} group ${i+1}/${psChunks.length}:`, res2.status, txt2.slice(0, 200));
-      }
-
-      // 2b) Properstar multi-region fan-out (UK focus). Convert to rent URLs if doRent
-      const ukRegionsEff = PROPERSTAR_UK_REGIONS.map(r => doRent ? ({ name: r.name, startUrls: r.startUrls.map(u => u.replace('/buy/', '/rent/')) }) : r);
-      const ukChunks = chunk(ukRegionsEff, 10);
-      for (const [i, group] of ukChunks.entries()) {
-        const body = {
-          adapterName: 'Properstar',
-          regions: group,
-          regionConcurrency: 6,
-          concurrency: 2,
-          maxPages: 1,
-          maxUrls: 30,
-          requestTimeoutMs: 18000,
-          discoveryTimeoutMs: 12000,
-          listingType: doRent ? 'rent' : 'buy'
-        };
-        const res3 = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
-        const txt3 = await res3.text();
-        console.log(`[scheduled] Properstar UK ${doRent ? 'RENT' : 'BUY'} group ${i+1}/${ukChunks.length}:`, res3.status, txt3.slice(0, 200));
-      }
-
       // 3) Benchmarks refresh
       const benchRes = await fetch(`${API_URL}/api/scrape/benchmarks/refresh`, { method: 'POST', headers, body: JSON.stringify({}) });
       const benchTxt = await benchRes.text();

@@ -81,20 +81,50 @@ router.post('/run', requireApiSecret(), async (req: Request, res: Response) => {
         const name = typeof r === 'string' ? r : (r.name || `region_${idx+1}`);
         const lock_key = `${adapterName}:${name}`;
         const owner = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const lockForMs = 15 * 60 * 1000; // 15 minutes
-        // Try to acquire lock
+        const lockForMs = 5 * 60 * 1000; // 5 minutes: reduce contention
+        // Per-adapter freshness pacing (skip if region updated recently)
+        const freshnessWindowMs = (
+          adapterName === 'Zoopla' ? 15 * 60 * 1000 :
+          adapterName === 'Properstar' ? 12 * 60 * 1000 :
+          10 * 60 * 1000
+        );
+        // Freshness guard: if region was updated very recently, skip without locking
+        try {
+          const { data: fresh } = await supa
+            .from('crawl_state')
+            .select('updated_at')
+            .eq('adapter_name', adapterName)
+            .eq('region', name)
+            .maybeSingle();
+          if (fresh?.updated_at) {
+            const ut = new Date(fresh.updated_at).getTime();
+            if (Date.now() - ut < freshnessWindowMs) {
+              return { name, skipped: true, reason: 'fresh' } as any;
+            }
+          }
+        } catch { /* ignore */ }
+        // Try to acquire lock using insert+ignoreDuplicates to avoid race upsert errors
         try {
           const nowIso = new Date().toISOString();
           const untilIso = new Date(Date.now() + lockForMs).toISOString();
           // Remove expired lock if present
           await supa.from('run_locks').delete().lt('locked_until', nowIso).eq('lock_key', lock_key);
+          // Check again after cleanup
           const { data: existing } = await supa.from('run_locks').select('locked_until').eq('lock_key', lock_key).maybeSingle();
           if (existing && new Date(existing.locked_until).getTime() > Date.now()) {
             return { name, skipped: true, reason: 'locked' } as any;
           }
-          const { error: lockErr } = await supa.from('run_locks').upsert({ lock_key, locked_until: untilIso, owner }).select('*').single();
-          if (lockErr) {
-            return { name, skipped: true, reason: 'lock_failed' } as any;
+          // Attempt to acquire lock via upsert; if row exists and not expired, someone else likely holds it
+          const up = await supa
+            .from('run_locks')
+            .upsert({ lock_key, locked_until: untilIso, owner }, { onConflict: 'lock_key', ignoreDuplicates: false });
+          if (up.error) {
+            return { name, skipped: true, reason: 'locked' } as any;
+          }
+          // Verify we now own the lock; if someone else owns it and it's not expired, skip
+          const { data: after } = await supa.from('run_locks').select('locked_until, owner').eq('lock_key', lock_key).maybeSingle();
+          if (after && new Date(after.locked_until).getTime() > Date.now() && after.owner !== owner) {
+            return { name, skipped: true, reason: 'locked' } as any;
           }
         } catch {
           // non-fatal; proceed without lock
