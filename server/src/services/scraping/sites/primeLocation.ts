@@ -12,19 +12,34 @@ function pickText($el: cheerio.Cheerio<any>): string | null {
   return t || null;
 }
 
-export class ZooplaAdapter extends BaseAdapter {
-  getMeta() { return { name: 'Zoopla' }; }
+export class PrimeLocationAdapter extends BaseAdapter {
+  getMeta() { return { name: 'PrimeLocation' }; }
 
   async *discoverListingUrls(ctx: ScrapeContext): AsyncGenerator<string> {
-    const base = ctx.source.base_url;
+    const base = ctx.source.base_url; // e.g. https://www.primelocation.com/
     const origin = new URL(base).origin;
     const seeds = (ctx.extra?.startUrls && Array.isArray(ctx.extra.startUrls) && ctx.extra.startUrls.length)
       ? ctx.extra.startUrls
       : [new URL('/for-sale/property/', base).toString()];
     const maxPages = Math.max(1, ctx.maxPages || 1);
 
-    for (const seed of seeds) {
-      // Cursor-based discovery: resume from last next_page for this seed
+    // If listingType requested, try to reflect it in seeds by path replacement
+    const seedsEff = seeds.map((seed) => {
+      if (ctx.extra?.listingType === 'rent') {
+        try {
+          const u = new URL(seed);
+          u.pathname = u.pathname.replace('/for-sale/', '/to-rent/');
+          if (u.searchParams.get('search_source')) {
+            u.searchParams.set('search_source', 'to-rent');
+          }
+          return u.toString();
+        } catch { /* ignore */ }
+      }
+      return seed;
+    });
+
+    for (const seed of seedsEff) {
+      // Cursor-based discovery per seed
       let nextPage = 1;
       try {
         const { data: cur } = await (ctx.adminClient as any)
@@ -42,29 +57,33 @@ export class ZooplaAdapter extends BaseAdapter {
         let listUrl = seed;
         try {
           const u = new URL(seed);
+          // PrimeLocation uses pn or page depending on context; preserve pn if present else set pn
           if (!u.searchParams.get('pn')) u.searchParams.set('pn', String(page));
           else u.searchParams.set('pn', String(page));
+          // Prefer newest listings if not already specified
           if (!u.searchParams.get('results_sort')) u.searchParams.set('results_sort', 'newest_listings');
           listUrl = u.toString();
         } catch {}
+
         ctx.log('List page', listUrl);
         const html = await ctx.http.getText(listUrl, ctx.requestTimeoutMs);
         const $ = cheerio.load(html);
 
         const candidates: string[] = [];
-        // Common listing anchors
-        $('a[href*="/for-sale/details/"]').each((_, a) => {
-          const u = absUrl(String($(a).attr('href') || ''), listUrl);
-          if (u && u.startsWith(origin)) candidates.push(u);
-        });
-        // Fallback: any anchor with /details/<id>
+        // Listing anchors typically contain /for-sale/details/ or /to-rent/details/
         $('a[href*="/details/"]').each((_, a) => {
           const u = absUrl(String($(a).attr('href') || ''), listUrl);
-          if (u && /\/details\//.test(u) && u.startsWith(origin)) candidates.push(u);
+          if (!u) return;
+          try {
+            const uu = new URL(u);
+            if (uu.origin !== origin) return;
+            if (/\/details\//.test(uu.pathname)) candidates.push(uu.toString());
+          } catch { /* ignore */ }
         });
-        // Regex from raw HTML
+
+        // Regex fallback for client-rendered cases
         try {
-          const absRe = /https?:\/\/www\.zoopla\.co\.uk\/[A-Za-z0-9\-\/]*details\/[0-9]+/g;
+          const absRe = /https?:\/\/www\.primelocation\.com\/[A-Za-z0-9\-\/]*details\/[0-9]+/g;
           const relRe = /\b\/[A-Za-z0-9\-\/]*details\/[0-9]+/g;
           const absMatches = html.match(absRe) || [];
           const relMatches = (html.match(relRe) || []).map((m) => new URL(m, listUrl).toString());
@@ -75,10 +94,9 @@ export class ZooplaAdapter extends BaseAdapter {
 
         const unique = Array.from(new Set(candidates));
         for (const u of unique) { yielded++; yield u; }
-        // If no listings found on this page, stop early to avoid scraping empty lists
         if (unique.length === 0) break;
       }
-      // Update cursor to next page after processing this seed (wrap to 1 after page 4)
+      // Wrap to page 1 after hitting page 4
       const nextAfter = lastPage >= 4 ? 1 : (lastPage + 1);
       try {
         await (ctx.adminClient as any)
@@ -90,22 +108,25 @@ export class ZooplaAdapter extends BaseAdapter {
 
   async parseListing(ctx: ScrapeContext, html: string, url: string) {
     const $ = cheerio.load(html);
+
     const title = pickText($('h1')) || pickText($('meta[property="og:title"]')) || null;
 
     // Price
     let price: number | undefined = undefined;
-    const priceText = pickText($('[data-testid="price"]'))
-      || pickText($('[itemprop="price"]'))
+    const priceText = pickText($('[data-testid="price"], .price, [itemprop="price"]'))
       || $('meta[property="og:price:amount"]').attr('content')
-      || (pickText($('.css-1xylxj1-Price')) as any);
+      || null;
     if (priceText) {
       const num = Number(String(priceText).match(/[0-9,.]+/g)?.[0]?.replace(/,/g, ''));
       if (Number.isFinite(num)) price = num;
     }
     let currency = 'GBP';
-    if (/₦|NGN/i.test(String(priceText))) currency = 'NGN';
-    if (/£|GBP/i.test(String(priceText))) currency = 'GBP';
-    if (/€|EUR/i.test(String(priceText))) currency = 'EUR';
+    const bodyText = $('body').text();
+    if (/₦|NGN/i.test(String(priceText) + bodyText)) currency = 'NGN';
+    if (/£|GBP/i.test(String(priceText) + bodyText)) currency = 'GBP';
+    if (/€|EUR/i.test(String(priceText) + bodyText)) currency = 'EUR';
+    if (/\$|USD/i.test(String(priceText) + bodyText)) currency = 'USD';
+    try { const u0 = new URL(url); if (u0.hostname.endsWith('.co.uk')) currency = 'GBP'; } catch {}
 
     // External ID from URL like /details/XXXXXXX
     let external_id: string = url;
@@ -115,7 +136,7 @@ export class ZooplaAdapter extends BaseAdapter {
       if (m && m[1]) external_id = m[1];
     } catch {}
 
-    // Address and dates from JSON-LD if present
+    // Address & geo via JSON-LD if present
     let address_line1: string | null = null;
     let address_line2: string | null = null;
     let postal_code: string | null = null;
@@ -157,13 +178,13 @@ export class ZooplaAdapter extends BaseAdapter {
       });
     } catch {}
 
-    // Address from visible selectors
+    // Address fallback from visible selectors
     if (!address_line1) {
-      const addrSel = pickText($('[data-testid="address-label"], .css-16jl9ur-Text, .css-10klw3m-Text, address, .property-address'));
+      const addrSel = pickText($('address, [data-testid="address"], .property-address, .css-16jl9ur-Text, .css-10klw3m-Text'));
       if (addrSel) address_line1 = addrSel.replace(/\s+/g, ' ').trim();
     }
 
-    // City/State from breadcrumb
+    // Breadcrumbs -> neighborhood/city/state
     let city: string | null = null; let state: string | null = null; let neighborhood: string | null = null;
     const crumbs = $('[class*="crumb" i] a, nav.breadcrumb a, .breadcrumbs a').map((_, a) => $(a).text().trim()).get().filter(Boolean);
     if (crumbs.length) {
@@ -172,7 +193,6 @@ export class ZooplaAdapter extends BaseAdapter {
       state = crumbs[crumbs.length - 3] || null;
     }
 
-    // Country
     const country = 'United Kingdom';
 
     return {
@@ -195,7 +215,7 @@ export class ZooplaAdapter extends BaseAdapter {
       listed_at,
       listing_updated_at,
       is_active: true,
-      raw: { source: 'Zoopla', url }
-    };
+      raw: { source: 'PrimeLocation', url },
+    } as any;
   }
 }

@@ -31,17 +31,39 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
     const toAbs = (u: string) => {
       try { return new URL(u).toString(); } catch { return new URL(u.replace(/^\/*/, '/'), ctx.source.base_url).toString(); }
     };
-    const listingBases = providedBases.length
-      ? providedBases.map(toAbs)
-      : [
-          new URL('/for-sale/', ctx.source.base_url).toString(),
-          new URL('/for-sale/houses/', ctx.source.base_url).toString(),
-        ];
+    // Respect listingType for default bases
+    const listingType = (ctx as any).extra?.listingType as ('buy'|'rent'|undefined);
+    const salePath = '/for-sale/';
+    const rentPath = '/for-rent/';
+    const defaultBases = listingType === 'rent'
+      ? [new URL(rentPath, ctx.source.base_url).toString(), new URL(rentPath + 'houses/', ctx.source.base_url).toString()]
+      : [new URL(salePath, ctx.source.base_url).toString(), new URL(salePath + 'houses/', ctx.source.base_url).toString()];
+    const listingBases = providedBases.length ? providedBases.map(toAbs) : defaultBases;
     const maxPages = Math.max(1, ctx.maxPages || 1);
 
     for (const base of listingBases) {
-      for (let page = 1; page <= maxPages; page++) {
-        const listUrl = page === 1 ? base : `${base}?page=${page}`;
+      // Cursor-based paging per seed URL (preserve existing query params like keywords)
+      let nextPage = 1;
+      try {
+        const { data: cur } = await (ctx.adminClient as any)
+          .from('discovery_cursors')
+          .select('next_page')
+          .eq('seed_url', base)
+          .maybeSingle();
+        if (cur && typeof cur.next_page === 'number' && cur.next_page > 0) nextPage = cur.next_page;
+      } catch { /* ignore */ }
+
+      const firstPage = nextPage;
+      const lastPage = Math.max(firstPage, firstPage + (maxPages - 1));
+      let yielded = 0;
+      for (let page = firstPage; page <= lastPage; page++) {
+        let listUrl = base;
+        try {
+          const u = new URL(base);
+          u.searchParams.set('page', String(page));
+          listUrl = u.toString();
+        } catch { /* keep base */ }
+
         ctx.log('List page', listUrl);
         const html = await ctx.http.getText(listUrl, ctx.requestTimeoutMs);
         const $ = cheerio.load(html);
@@ -63,19 +85,34 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
           const abs = absUrl(href, base);
           if (!abs) return;
           if (!abs.startsWith(origin)) return;
-          // Heuristic: likely detail pages contain '/for-sale/' and at least one more segment
+          // Heuristic: ensure we are on sale/rent detail pages with enough depth
           try {
             const u = new URL(abs);
             const segs = u.pathname.split('/').filter(Boolean);
-            if (!u.pathname.includes('/for-sale/')) return;
+            const wantRent = listingType === 'rent';
+            const hasSale = u.pathname.includes('/for-sale/');
+            const hasRent = u.pathname.includes('/for-rent/');
+            if (listingType) {
+              if (wantRent && !hasRent) return;
+              if (!wantRent && !hasSale) return;
+            } else {
+              if (!(hasSale || hasRent)) return;
+            }
             if (segs.length < 3) return; // avoid very shallow category pages
             candidates.push(abs);
           } catch { /* ignore */ }
         });
 
         const unique = Array.from(new Set(candidates));
-        for (const u of unique) yield u;
+        for (const u of unique) { yielded++; yield u; }
+        if (unique.length === 0) break;
       }
+      // Bump cursor to next page after processing window
+      try {
+        await (ctx.adminClient as any)
+          .from('discovery_cursors')
+          .upsert({ seed_url: base, next_page: lastPage + 1, last_run_at: new Date().toISOString(), last_status: `yielded:${yielded}` }, { onConflict: 'seed_url' });
+      } catch { /* ignore */ }
     }
   }
 

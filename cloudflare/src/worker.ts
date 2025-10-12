@@ -139,15 +139,23 @@ export default {
       return;
     }
 
+    const runId = `cf-base-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const headers = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${API_SECRET}`,
+      'X-Run-Id': runId,
     } as const;
 
     const now = new Date();
-    const hour = now.getUTCHours();
-    const minute = now.getUTCMinutes();
-    const doRent = (minute % 30) >= 15; // :00/:30 => buy, :15/:45 => rent
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    }).formatToParts(now);
+    const hour = Number(parts.find(p => p.type === 'hour')?.value ?? now.getUTCHours());
+    const minute = Number(parts.find(p => p.type === 'minute')?.value ?? now.getUTCMinutes());
+    const doRent = (minute % 30) >= 15; // :00/:30 => buy, :15/:45 => rent (Europe/London)
     const regionSeeds = hour % 2 === 0 ? UK_SEEDS : NIGERIA_SEEDS;
 
     try {

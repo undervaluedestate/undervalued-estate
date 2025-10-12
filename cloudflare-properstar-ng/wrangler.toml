@@ -1,7 +1,0 @@
-name = "undervalued-estate-scheduler-properstar-ng"
-main = "src/worker.ts"
-compatibility_date = "2024-01-01"
-
-[triggers]
-# Staggered: ~ every 15 mins at :07, :22, :37, :52
-crons = ["7,22,37,52 * * * *"]

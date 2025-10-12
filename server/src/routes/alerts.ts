@@ -90,8 +90,28 @@ router.post('/', requireAuth(), async (req: Request, res: Response) => {
 router.post('/dispatch', requireApiSecret(), async (req: Request, res: Response) => {
   try {
     const { maxPerAlert = 20 } = (req.body || {}) as any;
+    const runId = String((req.headers['x-run-id'] as string) || '');
+    const supa = getAdminClient();
+    const lockKey = 'job:alerts-dispatch';
+    const owner = `alerts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const ttlSeconds = 180; // 3 minutes is ample for dispatch
+
+    try {
+      const { data: acquired, error } = await supa.rpc('acquire_run_lock', {
+        p_lock_key: lockKey,
+        p_owner: owner,
+        p_ttl_seconds: ttlSeconds,
+      });
+      if (error || !acquired) {
+        return res.json({ status: 'ok', skipped: true, reason: 'locked' });
+      }
+    } catch {
+      return res.json({ status: 'ok', skipped: true, reason: 'lock-error' });
+    }
+
     const result = await dispatchAlerts({ maxPerAlert: Number(maxPerAlert) || 20 });
-    res.json({ status: 'ok', ...result });
+    try { await supa.rpc('release_run_lock', { p_lock_key: lockKey, p_owner: owner }); } catch { /* ignore */ }
+    res.json({ status: 'ok', runId, ...result });
   } catch (err: any) {
     console.error('POST /api/alerts/dispatch error', err);
     res.status(500).json({ error: err.message || 'Dispatch failed' });
