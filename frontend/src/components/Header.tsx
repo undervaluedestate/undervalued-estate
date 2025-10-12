@@ -13,7 +13,7 @@ export default function Header(): React.ReactElement {
       </div>
       <nav className="meta" style={{gap:16 as number}}>
         <a href="#deals" className="badge" style={{textDecoration:'none', color:'inherit'}}>Deals</a>
-        <a href="#benchmarks" className="badge" style={{textDecoration:'none', color:'inherit'}}>Benchmarks</a>
+        <a href="#benchmarks" className="badge" style={{textDecoration:'none', color:'inherit'}}>Clusters</a>
         <a href="#alerts" className="badge" style={{textDecoration:'none', color:'inherit'}}>Alerts</a>
       </nav>
     </header>
