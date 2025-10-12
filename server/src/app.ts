@@ -7,6 +7,7 @@ import benchmarksRouter from './routes/benchmarks';
 import alertsRouter from './routes/alerts';
 import scrapeRouter from './routes/scrape';
 import diagnosticsRouter from './routes/diagnostics';
+import clustersRouter from './routes/clusters';
 
 export const app = express();
 app.use(cors());
@@ -29,6 +30,7 @@ app.use('/api/benchmarks', benchmarksRouter as any);
 app.use('/api/alerts', alertsRouter as any);
 app.use('/api/scrape', scrapeRouter as any);
 app.use('/api/diagnostics', diagnosticsRouter as any);
+app.use('/api/clusters', clustersRouter as any);
 
 // Public ping (no auth) to validate that API path resolves quickly
 app.get('/api/ping', (_req, res) => {

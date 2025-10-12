@@ -1,0 +1,21 @@
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" fill="currentColor" role="img" aria-label="Undervalued Estate monogram">
+  <defs>
+    <!-- Mask: white reveals, black punches holes for window panes -->
+    <mask id="ue-window-cut">
+      <rect x="0" y="0" width="256" height="256" fill="white"/>
+      <!-- Centered 2x2 panes around x=128 -->
+      <rect x="112" y="116" width="12" height="12" rx="2" fill="black"/>
+      <rect x="132" y="116" width="12" height="12" rx="2" fill="black"/>
+      <rect x="112" y="136" width="12" height="12" rx="2" fill="black"/>
+      <rect x="132" y="136" width="12" height="12" rx="2" fill="black"/>
+    </mask>
+  </defs>
+  <g mask="url(#ue-window-cut)">
+    <!-- Roof -->
+    <path d="M40 104L128 28L216 104H192L128 52L64 104H40Z"/>
+    <!-- Right pillar -->
+    <rect x="172" y="104" width="28" height="112" rx="4"/>
+    <!-- Left pillar as downward arrow -->
+    <path d="M56 104H84V156H100L70 208L40 156H56V104Z"/>
+  </g>
+</svg>

@@ -13,6 +13,9 @@ router.get('/', async (req: Request, res: Response) => {
       city,
       neighborhood,
       property_type,
+      bedrooms,
+      bathrooms,
+      currency,
       min_price,
       max_price,
       min_size_sqm,
@@ -40,6 +43,9 @@ router.get('/', async (req: Request, res: Response) => {
     if (city) query = query.eq('city', city);
     if (neighborhood) query = query.eq('neighborhood', neighborhood);
     if (property_type) query = query.eq('property_type', property_type);
+    if (currency) query = query.eq('currency', currency);
+    if (bedrooms && !Number.isNaN(Number(bedrooms))) query = query.eq('bedrooms', Number(bedrooms));
+    if (bathrooms && !Number.isNaN(Number(bathrooms))) query = query.eq('bathrooms', Number(bathrooms));
 
     if (min_price && !Number.isNaN(Number(min_price))) query = query.gte('price', Number(min_price));
     if (max_price && !Number.isNaN(Number(max_price))) query = query.lte('price', Number(max_price));

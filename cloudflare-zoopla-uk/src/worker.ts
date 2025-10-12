@@ -117,8 +117,8 @@ export default {
       try {
         // NigeriaPropertyCentre daily rent sweep (reduced to Lagos & Abuja)
         const NPC_REGIONS = [
-          { name: 'Lagos', paths: ['/for-sale/flats-apartments/lagos/'] },
-          { name: 'Abuja', paths: ['/for-sale/flats-apartments/abuja/'] },
+          { name: 'Lagos', paths: ['/for-rent/flats-apartments/lagos/'] },
+          { name: 'Abuja', paths: ['/for-rent/flats-apartments/abuja/'] },
         ];
         const body = {
           adapterName: 'NigeriaPropertyCentre',

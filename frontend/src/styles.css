@@ -29,6 +29,7 @@ body{
   padding: 16px 0 24px; border-bottom: 1px solid rgba(255,255,255,.06);
 }
 .logo{ display:flex; align-items:center; gap:12px; font-weight:700; }
+.logo-mark{ color: var(--brand); filter: drop-shadow(0 6px 16px rgba(0,0,0,.35)); }
 .logo-badge{
   width:36px; height:36px; border-radius: 10px; background: linear-gradient(135deg, var(--brand), var(--accent));
   display:grid; place-items:center; color:#001017; font-weight: 900;

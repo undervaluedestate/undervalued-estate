@@ -1,4 +1,5 @@
 import React from 'react';
+import Logo from './Logo';
 
 type Item = {
   id: string;
@@ -48,7 +49,16 @@ function DealBadge({ cls }: { cls: Item['deal_class'] }){
   return <span className={map[cls] || 'badge'}>{label[cls] || cls}</span>;
 }
 
-export default function Results({ items }: { items: Item[] }): JSX.Element {
+export default function Results({ items }: { items: Item[] }): React.ReactElement {
+  if (!items || items.length === 0) {
+    return (
+      <div className="card empty-state" style={{display:'grid', placeItems:'center', textAlign:'center', padding:'32px'}}>
+        <Logo size={56} className="logo-mark" />
+        <div style={{marginTop:12, fontWeight:700}}>No deals found</div>
+        <div style={{opacity:.8}}>Try adjusting filters or search terms.</div>
+      </div>
+    );
+  }
   return (
     <div className="results">
       {items.map(it => (

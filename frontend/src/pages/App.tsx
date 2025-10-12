@@ -22,6 +22,9 @@ type FiltersState = {
   city: string;
   neighborhood: string;
   property_type: string;
+  currency: string;
+  bedrooms: string;
+  bathrooms: string;
   min_price: string;
   max_price: string;
   min_size_sqm: string;
@@ -41,6 +44,9 @@ export default function App(){
     city: '',
     neighborhood: '',
     property_type: '',
+    currency: '',
+    bedrooms: '',
+    bathrooms: '',
     min_price: '',
     max_price: '',
     min_size_sqm: '',
@@ -56,12 +62,27 @@ export default function App(){
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    function onHash(){
-      setRoute(window.location.hash.replace('#','') || 'deals');
+    function applyHash(){
+      const raw = window.location.hash.replace('#','');
+      const [r, qs] = raw.split('?');
+      const nextRoute = r || 'deals';
+      setRoute(nextRoute);
+      if (qs && nextRoute === 'deals') {
+        const params = new URLSearchParams(qs);
+        setFilters(prev => {
+          const next = { ...prev };
+          for (const [k, v] of params.entries()) {
+            if ((k as keyof typeof prev) in prev) {
+              (next as any)[k] = v;
+            }
+          }
+          return next;
+        });
+      }
     }
-    window.addEventListener('hashchange', onHash);
-    onHash();
-    return () => window.removeEventListener('hashchange', onHash);
+    window.addEventListener('hashchange', applyHash);
+    applyHash();
+    return () => window.removeEventListener('hashchange', applyHash);
   }, []);
 
   const queryString = useMemo(() => {

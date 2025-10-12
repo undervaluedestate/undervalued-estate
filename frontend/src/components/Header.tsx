@@ -1,10 +1,11 @@
 import React from 'react';
+import Logo from './Logo';
 
 export default function Header(): React.ReactElement {
   return (
     <header className="header">
       <div className="logo">
-        <div className="logo-badge">UE</div>
+        <Logo size={36} className="logo-mark" />
         <div>
           <div style={{fontSize:16, opacity:.8}}>Undervalued</div>
           <div style={{fontSize:18, fontWeight:800, letterSpacing:.3}}>ESTATE</div>
