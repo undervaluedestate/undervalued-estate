@@ -4,10 +4,7 @@ compatibility_date = "2024-01-01"
 
 [triggers]
 # Option B: rotate workers hourly; NPC at minute 12 on hours 2,6,10,14,18,22
-crons = [
-  "12 2,6,10,14,18,22 * * *",  # buy-focused rotation
-  "22 3 * * *"                  # daily rent sweep
-]
+crons = ["12 2,6,10,14,18,22 * * *"]
 
 # Enables Workers Observability (logs, traces, metrics in the dashboard)
 [observability]

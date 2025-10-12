@@ -4,10 +4,7 @@ compatibility_date = "2024-01-01"
 
 [triggers]
 # Option B: rotate workers hourly; Properstar at minute 34 on hours 3,7,11,15,19,23
-crons = [
-  "34 3,7,11,15,19,23 * * *",  # buy-focused rotation
-  "22 5 * * *"                  # daily rent sweep
-]
+crons = ["34 3,7,11,15,19,23 * * *"]
 
 # Enables Workers Observability (logs, traces, metrics in the dashboard)
 [observability]

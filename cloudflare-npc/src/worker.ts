@@ -4,29 +4,8 @@ export interface Env { API_URL: string; API_SECRET: string; }
 type RegionDef = { name: string; paths?: string[]; startUrls?: string[] };
 
 const NPC_REGIONS: RegionDef[] = [
-  { name: 'Lagos-Lekki', paths: ['/for-sale/flats-apartments/lagos/lekki/'] },
-  { name: 'Lagos-Ikoyi', paths: ['/for-sale/flats-apartments/lagos/ikoyi/'] },
-  { name: 'Lagos-Victoria-Island', paths: ['/for-sale/flats-apartments/lagos/victoria-island/'] },
-  { name: 'Lagos-Ajah', paths: ['/for-sale/flats-apartments/lagos/ajah/'] },
-  { name: 'Lagos-Ikeja', paths: ['/for-sale/flats-apartments/lagos/ikeja/'] },
-  { name: 'Lagos-Yaba', paths: ['/for-sale/flats-apartments/lagos/yaba/'] },
-  { name: 'Lagos-Surulere', paths: ['/for-sale/flats-apartments/lagos/surulere/'] },
-  { name: 'Lagos-Lekki-Phase-1', paths: ['/for-sale/flats-apartments/lagos/lekki/lekki-phase-1/'] },
-  { name: 'Lagos-Osapa-London', paths: ['/for-sale/flats-apartments/lagos/osapa-london/'] },
-  { name: 'Lagos-Agungi', paths: ['/for-sale/flats-apartments/lagos/agungi/'] },
-  { name: 'Lagos-Chevron', paths: ['/for-sale/flats-apartments/lagos/chevron/'] },
-  { name: 'Lagos-Sangotedo', paths: ['/for-sale/flats-apartments/lagos/sangotedo/'] },
-  { name: 'Abuja-Maitama', paths: ['/for-sale/flats-apartments/abuja/maitama/'] },
-  { name: 'Abuja-Asokoro', paths: ['/for-sale/flats-apartments/abuja/asokoro/'] },
-  { name: 'Abuja-Wuse', paths: ['/for-sale/flats-apartments/abuja/wuse/'] },
-  { name: 'Abuja-Wuse-2', paths: ['/for-sale/flats-apartments/abuja/wuse-2/'] },
-  { name: 'Abuja-Gwarinpa', paths: ['/for-sale/flats-apartments/abuja/gwarinpa/'] },
-  { name: 'Abuja-Lokogoma', paths: ['/for-sale/flats-apartments/abuja/lokogoma/'] },
-  { name: 'Abuja-Guzape', paths: ['/for-sale/flats-apartments/abuja/guzape/'] },
-  { name: 'Abuja-Dawaki', paths: ['/for-sale/flats-apartments/abuja/gwarinpa/dawaki/'] },
-  // Keyword search seed (preserves ?keywords=... and paginates with page=)
-  { name: 'Lagos-Osapa-Search', startUrls: ['https://nigeriapropertycentre.com/for-sale?keywords=Osapa'] },
-  // ... add more as desired (keep ~40+)
+  { name: 'Lagos', paths: ['/for-sale/flats-apartments/lagos/'] },
+  { name: 'Abuja', paths: ['/for-sale/flats-apartments/abuja/'] },
 ];
 
 export default {
