@@ -90,7 +90,7 @@ router.get('/city', async (req: Request, res: Response) => {
 // GET /api/clusters/city/detail - stats + listings for a given cluster
 router.get('/city/detail', async (req: Request, res: Response) => {
   try {
-    const { country, state, city, property_type, currency, bedrooms, bathrooms, page = '1', per_page = '24' } = req.query as Record<string, string | undefined>;
+    const { country, state, city, property_type, currency, bedrooms, bathrooms, page = '1', per_page = '24', sort = 'price', order = 'asc' } = req.query as Record<string, string | undefined>;
     if (!city || !property_type) {
       return res.status(400).json({ error: 'city and property_type are required' });
     }
@@ -110,7 +110,9 @@ router.get('/city/detail', async (req: Request, res: Response) => {
     const perPageNum = Math.min(100, Math.max(1, parseInt(per_page || '24', 10)));
     const from = (pageNum - 1) * perPageNum;
     const to = from + perPageNum - 1;
-    q = q.order('scraped_at', { ascending: false }).range(from, to);
+    const sortField = ['price','price_per_sqm','scraped_at'].includes((sort||'').toLowerCase()) ? (sort as string) : 'price';
+    const asc = (order||'asc').toLowerCase() !== 'desc';
+    q = q.order(sortField as any, { ascending: asc }).range(from, to);
 
     const { data, error, count } = await q;
     if (error) throw error;
@@ -127,6 +129,32 @@ router.get('/city/detail', async (req: Request, res: Response) => {
     res.json({ stats, data: items, count: count ?? items.length });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch cluster detail' });
+  }
+});
+
+// GET /api/clusters/cities - fetch distinct city options for dropdown
+router.get('/cities', async (req: Request, res: Response) => {
+  try {
+    const { country } = req.query as Record<string, string | undefined>;
+    const supa = getAnonClient();
+    // Pull a reasonable sample and dedupe client-side for compatibility
+    let q = supa.from('v_search_results')
+      .select('city,country')
+      .eq('listing_type', 'buy')
+      .not('city','is', null);
+    if (country) q = q.eq('country', country);
+    const { data, error } = await q.limit(5000);
+    if (error) throw error;
+    const seen = new Map<string, number>();
+    for (const r of (data || []) as any[]) {
+      const c = r.city as string | null; if (!c) continue;
+      seen.set(c, (seen.get(c) || 0) + 1);
+    }
+    const list = Array.from(seen.entries()).map(([name, count]) => ({ name, count }))
+      .sort((a,b) => b.count - a.count || a.name.localeCompare(b.name));
+    res.json({ data: list });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch cities' });
   }
 });
 

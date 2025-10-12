@@ -49,6 +49,10 @@ export default function Benchmarks(): React.ReactElement {
   type ClusterStats = { sample_count: number; min_price: number | null; median_price: number | null; max_price: number | null; avg_ppsqm: number | null };
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, { loading: boolean; error: string; stats?: ClusterStats; items?: any[]; page: number }>>({});
+  const [cities, setCities] = useState<{ name: string; count: number }[]>([]);
+  const [citiesLoading, setCitiesLoading] = useState<boolean>(false);
+  const [citiesError, setCitiesError] = useState<string>('');
+  const [detailOrder, setDetailOrder] = useState<'asc'|'desc'>('asc');
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -75,12 +79,35 @@ export default function Benchmarks(): React.ReactElement {
 
   useEffect(() => { fetchClusters(); }, [queryString]);
 
+  async function fetchCities(){
+    setCitiesLoading(true); setCitiesError('');
+    try{
+      const p = new URLSearchParams();
+      if (filters.country) p.set('country', filters.country);
+      const res = await fetch(`${API_URL}/api/clusters/cities?${p.toString()}`);
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setCities((json.data as {name:string; count:number}[]) || []);
+    }catch(e:any){
+      setCitiesError(e.message || 'Failed to load cities');
+    }finally{
+      setCitiesLoading(false);
+    }
+  }
+
+  useEffect(() => { fetchCities(); }, [filters.country]);
+
   return (
     <section>
       <div className="card" style={{marginBottom:12}}>
         <div className="filters">
-          <input className="input" placeholder="Country" value={filters.country} onChange={e=>setFilters({...filters, country: e.target.value})} />
-          <input className="input" placeholder="City" value={filters.city} onChange={e=>setFilters({...filters, city: e.target.value})} />
+          <input className="input" placeholder="Country" value={filters.country} onChange={e=>setFilters({...filters, country: e.target.value, city: ''})} />
+          <select className="select" value={filters.city} onChange={e=>setFilters({...filters, city: e.target.value})}>
+            <option value="">Select city… {citiesLoading ? '(loading…)': ''}</option>
+            {cities.map(c => (
+              <option key={c.name} value={c.name}>{c.name} {c.count ? `(${c.count})` : ''}</option>
+            ))}
+          </select>
           <select className="select" value={filters.property_type} onChange={e=>setFilters({...filters, property_type: e.target.value})}>
             <option value="">Any type</option>
             <option value="house">House</option>
@@ -102,7 +129,16 @@ export default function Benchmarks(): React.ReactElement {
           <input className="input" placeholder="Bedrooms" value={filters.bedrooms} onChange={e=>setFilters({...filters, bedrooms: e.target.value})} />
           <input className="input" placeholder="Bathrooms" value={filters.bathrooms} onChange={e=>setFilters({...filters, bathrooms: e.target.value})} />
         </div>
-        
+        <div className="meta" style={{justifyContent:'space-between', marginTop:8}}>
+          <div style={{display:'flex', gap:8, alignItems:'center'}}>
+            <span style={{opacity:.8}}>Detail sort:</span>
+            <div className="segmented">
+              <button className={`seg ${detailOrder==='asc'?'active':''}`} onClick={()=>setDetailOrder('asc')}>Price ↑</button>
+              <button className={`seg ${detailOrder==='desc'?'active':''}`} onClick={()=>setDetailOrder('desc')}>Price ↓</button>
+            </div>
+          </div>
+          {citiesError && <div style={{color:'var(--warning)'}}>Cities: {citiesError}</div>}
+        </div>
       </div>
 
       {error && <div className="card" style={{borderColor:'#ef4444'}}>Error: {error}</div>}
@@ -144,8 +180,8 @@ export default function Benchmarks(): React.ReactElement {
                   if (r.currency) params.set('currency', r.currency);
                   if (r.bedrooms != null) params.set('bedrooms', String(r.bedrooms));
                   if (r.bathrooms != null) params.set('bathrooms', String(r.bathrooms));
-                  params.set('sort', 'scraped_at');
-                  params.set('order', 'desc');
+                  params.set('sort', 'price');
+                  params.set('order', detailOrder);
                   const href = `#deals?${params.toString()}`;
                   async function ensureDetail(){
                     // initialize
@@ -166,7 +202,7 @@ export default function Benchmarks(): React.ReactElement {
                   };
                   return (
                   <>
-                  <tr key={`${idx}-row`} onClick={onRowClick} style={{cursor:'pointer'}}>
+                  <tr key={`${idx}-row`} onClick={onRowClick} className="row-hover" style={{cursor:'pointer'}}>
                     <td>{r.country || ''}</td>
                     <td>{r.state || ''}</td>
                     <td>{r.city || ''}</td>
@@ -185,38 +221,40 @@ export default function Benchmarks(): React.ReactElement {
                   {expandedKey === rowKey && (
                     <tr key={`${idx}-detail`}>
                       <td colSpan={14}>
-                        <div className="card" style={{marginTop:8}}>
-                          {details[rowKey]?.loading && <div>Loading listings…</div>}
-                          {!!details[rowKey]?.error && <div style={{color:'#ef4444'}}>Error: {details[rowKey]?.error}</div>}
-                          {!!details[rowKey]?.stats && (
-                            <div className="meta" style={{justifyContent:'space-between'}}>
-                              <div>Sample: {details[rowKey]!.stats!.sample_count}</div>
-                              <div>Min: {formatMoney(details[rowKey]!.stats!.min_price, r.currency)}</div>
-                              <div>Median: {formatMoney(details[rowKey]!.stats!.median_price, r.currency)}</div>
-                              <div>Max: {formatMoney(details[rowKey]!.stats!.max_price, r.currency)}</div>
-                              <div>Avg ppsqm: {formatMoney(details[rowKey]!.stats!.avg_ppsqm, r.currency)}</div>
-                            </div>
-                          )}
-                          <div style={{marginTop:8}}>
-                            {(details[rowKey]?.items || []).map((it: any) => (
-                              <div key={it.id} className="meta" style={{justifyContent:'space-between', padding:'8px 0', borderTop:'1px solid rgba(255,255,255,.06)'}}>
-                                <div style={{display:'flex', gap:8}}>
-                                  <div style={{fontWeight:600}}>{it.title || 'Listing'}</div>
-                                  <div style={{opacity:.8}}>{[it.neighborhood, it.city, it.state].filter(Boolean).join(', ')}</div>
-                                </div>
-                                <div style={{display:'flex', gap:8}}>
-                                  <div>{formatMoney(it.price, it.currency)}</div>
-                                  <div>•</div>
-                                  <div>{it.size_sqm ? `${it.size_sqm} sqm` : '—'}</div>
-                                  <div>•</div>
-                                  <div>{it.price_per_sqm ? formatMoney(it.price_per_sqm, it.currency) : '—'} /sqm</div>
-                                  <div><a className="badge" href={it.url} target="_blank" rel="noreferrer">Open Listing</a></div>
-                                </div>
+                        <div className={`collapse ${expandedKey === rowKey ? 'open' : ''}`}>
+                          <div className="card" style={{marginTop:8}}>
+                            {details[rowKey]?.loading && <div>Loading listings…</div>}
+                            {!!details[rowKey]?.error && <div style={{color:'#ef4444'}}>Error: {details[rowKey]?.error}</div>}
+                            {!!details[rowKey]?.stats && (
+                              <div className="meta" style={{justifyContent:'space-between'}}>
+                                <div>Sample: {details[rowKey]!.stats!.sample_count}</div>
+                                <div>Min: {formatMoney(details[rowKey]!.stats!.min_price, r.currency)}</div>
+                                <div>Median: {formatMoney(details[rowKey]!.stats!.median_price, r.currency)}</div>
+                                <div>Max: {formatMoney(details[rowKey]!.stats!.max_price, r.currency)}</div>
+                                <div>Avg ppsqm: {formatMoney(details[rowKey]!.stats!.avg_ppsqm, r.currency)}</div>
                               </div>
-                            ))}
-                            {(!details[rowKey] || (details[rowKey]?.items || []).length === 0) && !details[rowKey]?.loading && (
-                              <div style={{opacity:.7}}>No listings in this cluster.</div>
                             )}
+                            <div style={{marginTop:8}}>
+                              {(details[rowKey]?.items || []).map((it: any) => (
+                                <div key={it.id} className="meta" style={{justifyContent:'space-between', padding:'8px 0', borderTop:'1px solid rgba(255,255,255,.06)'}}>
+                                  <div style={{display:'flex', gap:8}}>
+                                    <div style={{fontWeight:600}}>{it.title || 'Listing'}</div>
+                                    <div style={{opacity:.8}}>{[it.neighborhood, it.city, it.state].filter(Boolean).join(', ')}</div>
+                                  </div>
+                                  <div style={{display:'flex', gap:8}}>
+                                    <div>{formatMoney(it.price, it.currency)}</div>
+                                    <div>•</div>
+                                    <div>{it.size_sqm ? `${it.size_sqm} sqm` : '—'}</div>
+                                    <div>•</div>
+                                    <div>{it.price_per_sqm ? formatMoney(it.price_per_sqm, it.currency) : '—'} /sqm</div>
+                                    <div><a className="badge" href={it.url} target="_blank" rel="noreferrer">Open Listing</a></div>
+                                  </div>
+                                </div>
+                              ))}
+                              {(!details[rowKey] || (details[rowKey]?.items || []).length === 0) && !details[rowKey]?.loading && (
+                                <div style={{opacity:.7}}>No listings in this cluster.</div>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>

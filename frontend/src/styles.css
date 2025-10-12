@@ -77,3 +77,23 @@ body{
   .filters { grid-template-columns: 1fr; }
   .results { grid-template-columns: 1fr; }
 }
+
+/* Enhanced table styles */
+table { width: 100%; border-collapse: separate; border-spacing: 0; }
+thead th { position: sticky; top: 0; background: #0f141a; z-index: 1; }
+th, td { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.06); }
+tbody tr:nth-child(even) { background: rgba(255,255,255,.02); }
+.row-hover:hover { background: rgba(56,189,248,.08); transition: background .2s ease; }
+
+/* Segmented control */
+.segmented { display: inline-flex; background: #0b1016; border:1px solid rgba(255,255,255,.08); border-radius: 10px; overflow: hidden; }
+.segmented .seg { background: transparent; color: var(--text); border: none; padding: 6px 10px; cursor: pointer; font-weight: 600; opacity: .8; }
+.segmented .seg:hover { background: rgba(255,255,255,.06); }
+.segmented .seg.active { background: linear-gradient(135deg, var(--brand), var(--accent)); color: #001017; opacity: 1; }
+
+/* Collapse animation */
+.collapse { overflow: hidden; max-height: 0; opacity: 0; transition: max-height .35s ease, opacity .25s ease; }
+.collapse.open { max-height: 1000px; opacity: 1; }
+
+/* Subtle card hover */
+.card:hover { border-color: rgba(56,189,248,.25); }
