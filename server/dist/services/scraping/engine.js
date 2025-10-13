@@ -52,7 +52,8 @@ export class ScrapeEngine {
                 const defaultBaseUrlMap = {
                     'NigeriaPropertyCentre': 'https://nigeriapropertycentre.com/',
                     'Properstar': 'https://www.properstar.co.uk/',
-                    'Zoopla': 'https://www.zoopla.co.uk/'
+                    'Zoopla': 'https://www.zoopla.co.uk/',
+                    'PrimeLocation': 'https://www.primelocation.com/'
                 };
                 const base_url = defaultBaseUrlMap[meta.name];
                 if (!base_url) {

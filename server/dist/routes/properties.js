@@ -3,10 +3,19 @@ import { getAnonClient } from '../utils/supabase';
 const router = Router();
 router.get('/', async (req, res) => {
     try {
-        const { q, country, state, city, neighborhood, property_type, min_price, max_price, min_size_sqm, max_size_sqm, min_pct_below, // positive number like 10 means <= -10%
-        page = '1', per_page = '20', sort = 'pct_vs_market', order = 'asc', } = req.query;
+        const { q, country, state, city, neighborhood, property_type, bedrooms, bathrooms, currency, min_price, max_price, min_size_sqm, max_size_sqm, min_pct_below, // positive number like 10 means <= -10%
+        deal_type, // 'slightly_undervalued' | 'strongly_undervalued' | 'rare_deal'
+        listing_type, // optional override; default to 'buy'
+        page = '1', per_page = '20', sort = 'final_pct_vs_market', order = 'asc', } = req.query;
         const supa = getAnonClient();
         let query = supa.from('v_search_results').select('*', { count: 'exact' });
+        // Default to BUY listings. We use rent data only for insights (yield) not as separate cards.
+        if (!listing_type) {
+            query = query.eq('listing_type', 'buy');
+        }
+        else if (listing_type === 'buy' || listing_type === 'rent') {
+            query = query.eq('listing_type', listing_type);
+        }
         if (country)
             query = query.eq('country', country);
         if (state)
@@ -17,6 +26,12 @@ router.get('/', async (req, res) => {
             query = query.eq('neighborhood', neighborhood);
         if (property_type)
             query = query.eq('property_type', property_type);
+        if (currency)
+            query = query.eq('currency', currency);
+        if (bedrooms && !Number.isNaN(Number(bedrooms)))
+            query = query.eq('bedrooms', Number(bedrooms));
+        if (bathrooms && !Number.isNaN(Number(bathrooms)))
+            query = query.eq('bathrooms', Number(bathrooms));
         if (min_price && !Number.isNaN(Number(min_price)))
             query = query.gte('price', Number(min_price));
         if (max_price && !Number.isNaN(Number(max_price)))
@@ -26,7 +41,12 @@ router.get('/', async (req, res) => {
         if (max_size_sqm && !Number.isNaN(Number(max_size_sqm)))
             query = query.lte('size_sqm', Number(max_size_sqm));
         if (min_pct_below) {
-            query = query.lte('pct_vs_market', -Math.abs(Number(min_pct_below)));
+            // Use feature-aware metric when available
+            query = query.lte('final_pct_vs_market', -Math.abs(Number(min_pct_below)));
+        }
+        if (deal_type) {
+            // Filter by final_deal_class, which prefers feature-aware classification
+            query = query.eq('final_deal_class', deal_type);
         }
         if (q) {
             query = query.or([
@@ -42,9 +62,9 @@ router.get('/', async (req, res) => {
         const from = (pageNum - 1) * perPageNum;
         const to = from + perPageNum - 1;
         const allowedSort = new Set([
-            'pct_vs_market', 'price', 'size_sqm', 'price_per_sqm', 'scraped_at'
+            'final_pct_vs_market', 'pct_vs_market', 'price', 'size_sqm', 'price_per_sqm', 'scraped_at'
         ]);
-        const sortKey = allowedSort.has(String(sort)) ? String(sort) : 'pct_vs_market';
+        const sortKey = allowedSort.has(String(sort)) ? String(sort) : 'final_pct_vs_market';
         const ord = String(order) === 'desc' ? false : true;
         query = query.order(sortKey, { ascending: ord, nullsFirst: true }).range(from, to);
         const { data, error, count } = await query;

@@ -3,8 +3,9 @@ import { requireApiSecret } from '../utils/auth';
 import { getAdminClient } from '../utils/supabase';
 import { ScrapeEngine } from '../services/scraping/engine';
 import { NigeriaPropertyCentreAdapter } from '../services/scraping/sites/nigeriaPropertyCentre';
-import { ProperstarAdapter } from 'services/scraping/sites/properstar';
+import { ProperstarAdapter } from '../services/scraping/sites/properstar';
 import { ZooplaAdapter } from '../services/scraping/sites/zoopla';
+import { PrimeLocationAdapter } from '../services/scraping/sites/primeLocation';
 import { getText } from '../services/scraping/http';
 import { normalizeToProperty } from '../services/scraping/normalize';
 const router = Router();
@@ -24,6 +25,7 @@ router.post('/run', requireApiSecret(), async (req, res) => {
         const reqTimeoutRaw = body.requestTimeoutMs ?? 8000;
         const discTimeoutRaw = body.discoveryTimeoutMs ?? 5000;
         const dryRun = !!body.dryRun;
+        const respondQuick = Boolean(body.respondQuick);
         const maxPages = Math.max(1, Math.min(10, Number(maxPagesRaw)));
         if (!Number.isFinite(maxPages))
             errors.push('maxPages must be a number');
@@ -40,7 +42,7 @@ router.post('/run', requireApiSecret(), async (req, res) => {
             return res.status(400).json({ error: 'Invalid request', details: errors });
         const effectiveDryRun = (String(req.query.dryRun || '').toLowerCase() === 'true') || Boolean(dryRun);
         const engine = new ScrapeEngine({
-            adapters: [new NigeriaPropertyCentreAdapter(), new ProperstarAdapter(), new ZooplaAdapter()],
+            adapters: [new NigeriaPropertyCentreAdapter(), new ProperstarAdapter(), new ZooplaAdapter(), new PrimeLocationAdapter()],
             concurrency: typeof body.concurrency === 'number' && body.concurrency > 0 ? Math.min(10, Math.max(1, Math.floor(body.concurrency))) : 6,
         });
         if (effectiveDryRun) {
@@ -54,7 +56,8 @@ router.post('/run', requireApiSecret(), async (req, res) => {
             // Determine base_url for adapter to prefix region paths when needed
             const defaultBaseUrlMap = {
                 'NigeriaPropertyCentre': 'https://nigeriapropertycentre.com/',
-                'Properstar': 'https://www.properstar.co.uk/'
+                'Properstar': 'https://www.properstar.co.uk/',
+                'PrimeLocation': 'https://www.primelocation.com/'
             };
             const base_url = defaultBaseUrlMap[adapterName] || defaultBaseUrlMap['NigeriaPropertyCentre'];
             const toAbsolute = (u) => {
@@ -72,24 +75,45 @@ router.post('/run', requireApiSecret(), async (req, res) => {
                 const name = typeof r === 'string' ? r : (r.name || `region_${idx + 1}`);
                 const lock_key = `${adapterName}:${name}`;
                 const owner = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-                const lockForMs = 15 * 60 * 1000; // 15 minutes
-                // Try to acquire lock
+                const lockForMs = 10 * 60 * 1000; // 10 minutes: avoid overlap on slow regions
+                // Per-adapter freshness pacing (skip if region updated recently)
+                const freshnessWindowMs = (adapterName === 'Zoopla' ? 15 * 60 * 1000 :
+                    adapterName === 'Properstar' ? 12 * 60 * 1000 :
+                        10 * 60 * 1000);
+                // Freshness guard: if region was updated very recently, skip without locking
                 try {
-                    const nowIso = new Date().toISOString();
-                    const untilIso = new Date(Date.now() + lockForMs).toISOString();
-                    // Remove expired lock if present
-                    await supa.from('run_locks').delete().lt('locked_until', nowIso).eq('lock_key', lock_key);
-                    const { data: existing } = await supa.from('run_locks').select('locked_until').eq('lock_key', lock_key).maybeSingle();
-                    if (existing && new Date(existing.locked_until).getTime() > Date.now()) {
+                    const { data: fresh } = await supa
+                        .from('crawl_state')
+                        .select('updated_at')
+                        .eq('adapter_name', adapterName)
+                        .eq('region', name)
+                        .maybeSingle();
+                    if (fresh?.updated_at) {
+                        const ut = new Date(fresh.updated_at).getTime();
+                        if (Date.now() - ut < freshnessWindowMs) {
+                            return { name, skipped: true, reason: 'fresh' };
+                        }
+                    }
+                }
+                catch { /* ignore */ }
+                // Try to acquire lock atomically via RPC (only succeeds if expired or new)
+                try {
+                    const ttlSeconds = Math.floor(lockForMs / 1000);
+                    const { data: acquired, error: lockErr } = await supa.rpc('acquire_run_lock', {
+                        p_lock_key: lock_key,
+                        p_owner: owner,
+                        p_ttl_seconds: ttlSeconds,
+                    });
+                    if (lockErr) {
                         return { name, skipped: true, reason: 'locked' };
                     }
-                    const { error: lockErr } = await supa.from('run_locks').upsert({ lock_key, locked_until: untilIso, owner }).select('*').single();
-                    if (lockErr) {
-                        return { name, skipped: true, reason: 'lock_failed' };
+                    if (!acquired) {
+                        return { name, skipped: true, reason: 'locked' };
                     }
                 }
                 catch {
-                    // non-fatal; proceed without lock
+                    // treat RPC failure as locked to avoid duplicate work
+                    return { name, skipped: true, reason: 'lock-error' };
                 }
                 const startUrls = Array.isArray(r.startUrls) && r.startUrls.length
                     ? r.startUrls
@@ -123,9 +147,9 @@ router.post('/run', requireApiSecret(), async (req, res) => {
                     });
                 }
                 finally {
-                    // Release lock early to shorten contention
+                    // Release lock only if we own it
                     try {
-                        await supa.from('run_locks').delete().eq('lock_key', lock_key);
+                        await supa.rpc('release_run_lock', { p_lock_key: lock_key, p_owner: owner });
                     }
                     catch { /* ignore */ }
                 }
@@ -170,24 +194,85 @@ router.post('/run', requireApiSecret(), async (req, res) => {
                 catch { /* ignore */ }
                 return { name, requestedMaxPages: regionMaxPages, ...regionResult };
             }));
-            const regionResults = await Promise.all(perRegionTasks);
-            const inserted = regionResults.reduce((s, r) => s + (r.inserted || 0), 0);
-            const discovered = regionResults.reduce((s, r) => s + (r.discovered || 0), 0);
-            const errorsAgg = regionResults.flatMap(r => (r.errors || []).map((e) => `${r.name}: ${e}`));
-            return res.json({ status: 'ok', inserted, discovered, regions: regionResults, errors: errorsAgg, adapters: engine.listAdapters() });
+            if (respondQuick) {
+                // Fire-and-forget to avoid upstream 524 timeouts
+                (async () => {
+                    try {
+                        const regionResults = await Promise.all(perRegionTasks);
+                        const inserted = regionResults.reduce((s, r) => s + (r.inserted || 0), 0);
+                        const discovered = regionResults.reduce((s, r) => s + (r.discovered || 0), 0);
+                        const errorsAgg = regionResults.flatMap(r => (r.errors || []).map((e) => `${r.name}: ${e}`));
+                        // eslint-disable-next-line no-console
+                        console.log('[scrape.run][bg] done', { adapterName, inserted, discovered, errors: errorsAgg.slice(0, 5) });
+                        // Persist a scheduled run log for observability (best-effort)
+                        try {
+                            await supa.from('scheduled_runs').insert({
+                                created_at: new Date().toISOString(),
+                                region: 'regions',
+                                adapter: adapterName,
+                                discovered,
+                                inserted,
+                                errors: errorsAgg.length,
+                                raw: {
+                                    type: 'bg-regions',
+                                    results: regionResults.map((r) => ({ name: r.name, inserted: r.inserted || 0, discovered: r.discovered || 0, skipped: r.skipped || false, reason: r.reason || null })),
+                                }
+                            });
+                        }
+                        catch { /* ignore */ }
+                    }
+                    catch (e) {
+                        // eslint-disable-next-line no-console
+                        console.error('[scrape.run][bg] failed', e);
+                    }
+                })();
+                return res.status(202).json({ status: 'accepted', queued: true, adapter: adapterName });
+            }
+            else {
+                const regionResults = await Promise.all(perRegionTasks);
+                const inserted = regionResults.reduce((s, r) => s + (r.inserted || 0), 0);
+                const discovered = regionResults.reduce((s, r) => s + (r.discovered || 0), 0);
+                const errorsAgg = regionResults.flatMap(r => (r.errors || []).map((e) => `${r.name}: ${e}`));
+                return res.json({ status: 'ok', inserted, discovered, regions: regionResults, errors: errorsAgg, adapters: engine.listAdapters() });
+            }
         }
         // Single-run path (no regions[] provided)
-        const results = await engine.run({
-            adapterName,
-            maxPages,
-            maxUrls,
-            requestTimeoutMs,
-            discoveryTimeoutMs,
-            extraStartUrls: Array.isArray(body.startUrls) ? body.startUrls : [],
-            extraListingType: body.listingType,
-            concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
-        });
-        res.json({ status: 'ok', ...results, adapters: engine.listAdapters() });
+        if (respondQuick) {
+            (async () => {
+                try {
+                    const results = await engine.run({
+                        adapterName,
+                        maxPages,
+                        maxUrls,
+                        requestTimeoutMs,
+                        discoveryTimeoutMs,
+                        extraStartUrls: Array.isArray(body.startUrls) ? body.startUrls : [],
+                        extraListingType: body.listingType,
+                        concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
+                    });
+                    // eslint-disable-next-line no-console
+                    console.log('[scrape.run][bg-single] done', { adapterName, inserted: results.inserted, discovered: results.discovered });
+                }
+                catch (e) {
+                    // eslint-disable-next-line no-console
+                    console.error('[scrape.run][bg-single] failed', e);
+                }
+            })();
+            return res.status(202).json({ status: 'accepted', queued: true, adapter: adapterName });
+        }
+        else {
+            const results = await engine.run({
+                adapterName,
+                maxPages,
+                maxUrls,
+                requestTimeoutMs,
+                discoveryTimeoutMs,
+                extraStartUrls: Array.isArray(body.startUrls) ? body.startUrls : [],
+                extraListingType: body.listingType,
+                concurrency: typeof body.concurrency === 'number' ? body.concurrency : undefined,
+            });
+            res.json({ status: 'ok', ...results, adapters: engine.listAdapters() });
+        }
     }
     catch (err) {
         // eslint-disable-next-line no-console
@@ -198,7 +283,24 @@ router.post('/run', requireApiSecret(), async (req, res) => {
 router.post('/benchmarks/refresh', requireApiSecret(), async (req, res) => {
     try {
         const { country, state, city, neighborhood, property_type } = (req.body || {});
+        const runId = String(req.headers['x-run-id'] || '');
         const supa = getAdminClient();
+        const lockKey = 'job:benchmarks-refresh';
+        const owner = `bench-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const ttlSeconds = 180; // 3 minutes should suffice
+        try {
+            const { data: acquired, error } = await supa.rpc('acquire_run_lock', {
+                p_lock_key: lockKey,
+                p_owner: owner,
+                p_ttl_seconds: ttlSeconds,
+            });
+            if (error || !acquired) {
+                return res.json({ status: 'ok', skipped: true, reason: 'locked' });
+            }
+        }
+        catch {
+            return res.json({ status: 'ok', skipped: true, reason: 'lock-error' });
+        }
         const { error } = await supa.rpc('refresh_benchmarks', {
             target_country: country || null,
             target_state: state || null,
@@ -208,7 +310,11 @@ router.post('/benchmarks/refresh', requireApiSecret(), async (req, res) => {
         });
         if (error)
             throw error;
-        res.json({ status: 'ok' });
+        try {
+            await supa.rpc('release_run_lock', { p_lock_key: lockKey, p_owner: owner });
+        }
+        catch { /* ignore */ }
+        res.json({ status: 'ok', runId });
     }
     catch (err) {
         // eslint-disable-next-line no-console
@@ -217,15 +323,14 @@ router.post('/benchmarks/refresh', requireApiSecret(), async (req, res) => {
     }
 });
 export default router;
-// Seed endpoint: parse & upsert specific listing URLs (debugging discovery)
 router.post('/seed', requireApiSecret(), async (req, res) => {
     try {
-        const { adapterName, urls } = (req.body || {});
+        const { adapterName, urls, respondQuick } = (req.body || {});
         if (!adapterName)
             return res.status(400).json({ error: 'adapterName is required' });
         if (!Array.isArray(urls) || urls.length === 0)
             return res.status(400).json({ error: 'urls[] is required' });
-        const adapters = [new NigeriaPropertyCentreAdapter(), new ProperstarAdapter(), new ZooplaAdapter()];
+        const adapters = [new NigeriaPropertyCentreAdapter(), new ProperstarAdapter(), new ZooplaAdapter(), new PrimeLocationAdapter()];
         const adapter = adapters.find(a => a.getMeta().name === adapterName);
         if (!adapter)
             return res.status(400).json({ error: `Unknown adapter ${adapterName}` });
@@ -233,7 +338,8 @@ router.post('/seed', requireApiSecret(), async (req, res) => {
         // Ensure source exists
         const defaultBaseUrlMap = {
             'NigeriaPropertyCentre': 'https://nigeriapropertycentre.com/',
-            'Properstar': 'https://www.properstar.co.uk/'
+            'Properstar': 'https://www.properstar.co.uk/',
+            'PrimeLocation': 'https://www.primelocation.com/'
         };
         const base_url = defaultBaseUrlMap[adapterName];
         if (!base_url)

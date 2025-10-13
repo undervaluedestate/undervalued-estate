@@ -33,16 +33,39 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                 return new URL(u.replace(/^\/*/, '/'), ctx.source.base_url).toString();
             }
         };
-        const listingBases = providedBases.length
-            ? providedBases.map(toAbs)
-            : [
-                new URL('/for-sale/', ctx.source.base_url).toString(),
-                new URL('/for-sale/houses/', ctx.source.base_url).toString(),
-            ];
+        // Respect listingType for default bases
+        const listingType = ctx.extra?.listingType;
+        const salePath = '/for-sale/';
+        const rentPath = '/for-rent/';
+        const defaultBases = listingType === 'rent'
+            ? [new URL(rentPath, ctx.source.base_url).toString(), new URL(rentPath + 'houses/', ctx.source.base_url).toString()]
+            : [new URL(salePath, ctx.source.base_url).toString(), new URL(salePath + 'houses/', ctx.source.base_url).toString()];
+        const listingBases = providedBases.length ? providedBases.map(toAbs) : defaultBases;
         const maxPages = Math.max(1, ctx.maxPages || 1);
         for (const base of listingBases) {
-            for (let page = 1; page <= maxPages; page++) {
-                const listUrl = page === 1 ? base : `${base}?page=${page}`;
+            // Cursor-based paging per seed URL (preserve existing query params like keywords)
+            let nextPage = 1;
+            try {
+                const { data: cur } = await ctx.adminClient
+                    .from('discovery_cursors')
+                    .select('next_page')
+                    .eq('seed_url', base)
+                    .maybeSingle();
+                if (cur && typeof cur.next_page === 'number' && cur.next_page > 0)
+                    nextPage = cur.next_page;
+            }
+            catch { /* ignore */ }
+            const firstPage = nextPage;
+            const lastPage = Math.max(firstPage, firstPage + (maxPages - 1));
+            let yielded = 0;
+            for (let page = firstPage; page <= lastPage; page++) {
+                let listUrl = base;
+                try {
+                    const u = new URL(base);
+                    u.searchParams.set('page', String(page));
+                    listUrl = u.toString();
+                }
+                catch { /* keep base */ }
                 ctx.log('List page', listUrl);
                 const html = await ctx.http.getText(listUrl, ctx.requestTimeoutMs);
                 const $ = cheerio.load(html);
@@ -64,11 +87,28 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                         return;
                     if (!abs.startsWith(origin))
                         return;
-                    // Heuristic: likely detail pages contain '/for-sale/' and at least one more segment
+                    // Heuristic: ensure we are on sale/rent detail pages with enough depth
                     try {
                         const u = new URL(abs);
+                        const p = u.pathname.toLowerCase();
+                        // Skip non-listing informational pages (e.g., market trends/average prices)
+                        if (p.includes('/market-trends') || p.includes('/average-prices'))
+                            return;
                         const segs = u.pathname.split('/').filter(Boolean);
-                        if (!u.pathname.includes('/for-sale/'))
+                        const wantRent = listingType === 'rent';
+                        const hasSale = u.pathname.includes('/for-sale/');
+                        const hasRent = u.pathname.includes('/for-rent/');
+                        // Strong preference/requirement: URL should start with the expected base
+                        if (wantRent) {
+                            if (!p.startsWith('/for-rent/'))
+                                return;
+                        }
+                        else {
+                            if (!p.startsWith('/for-sale/'))
+                                return;
+                        }
+                        // Backward compatibility guard if listingType not provided
+                        if (!listingType && !(hasSale || hasRent))
                             return;
                         if (segs.length < 3)
                             return; // avoid very shallow category pages
@@ -77,9 +117,20 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                     catch { /* ignore */ }
                 });
                 const unique = Array.from(new Set(candidates));
-                for (const u of unique)
+                for (const u of unique) {
+                    yielded++;
                     yield u;
+                }
+                if (unique.length === 0)
+                    break;
             }
+            // Bump cursor to next page after processing window
+            try {
+                await ctx.adminClient
+                    .from('discovery_cursors')
+                    .upsert({ seed_url: base, next_page: lastPage + 1, last_run_at: new Date().toISOString(), last_status: `yielded:${yielded}` }, { onConflict: 'seed_url' });
+            }
+            catch { /* ignore */ }
         }
     }
     async parseListing(ctx, html, url) {
@@ -757,16 +808,197 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                     listingUpdatedAt = d.toISOString();
             }
         }
+        // Currency: use exactly what listing shows; NPC is NGN, but detect symbols explicitly
+        let currency = 'NGN';
+        try {
+            const priceLabel = pickText($('.price, .price-label, [itemprop="price"], .amount')) || bodyText;
+            if (/₦|\bNGN\b|naira/i.test(String(priceLabel)))
+                currency = 'NGN';
+        }
+        catch { /* default NGN */ }
+        // Property type: prefer explicit labeled value, details list, then breadcrumbs/URL/title keywords
+        let property_type = null;
+        try {
+            const typeFromLabels = readLabeledFromTables(['Property Type', 'Type', 'Property type']);
+            if (typeFromLabels)
+                property_type = typeFromLabels;
+            // Also scan list-style detail rows for a "Property Type" field
+            if (!property_type) {
+                const rows = $('.property-details li, .details li, .key-details li, .facts li, .summary li').toArray();
+                for (const li of rows) {
+                    const label = $(li).find('.name, .label, .title, strong').first().text().trim().toLowerCase();
+                    let val = $(li).find('.value, .text').first().text().trim();
+                    if (!val) {
+                        // Fallback: remove label text from full li text
+                        const full = $(li).text().replace(/\s+/g, ' ').trim();
+                        val = full.replace(new RegExp(`^${label}\s*:?\s*`, 'i'), '').trim();
+                    }
+                    if (!val)
+                        continue;
+                    if (label.includes('property type') || label === 'type') {
+                        const low = val.toLowerCase();
+                        // Ignore transaction types that may appear under generic 'Type'
+                        if (/(for\s*sale|for\s*rent|short\s*let|lease)/i.test(low))
+                            continue;
+                        property_type = val;
+                        break;
+                    }
+                }
+            }
+            const typeFrom = (s) => {
+                if (!s)
+                    return null;
+                const t = String(s).toLowerCase();
+                if (/(apartment|flat)/i.test(t))
+                    return 'apartment';
+                if (/(duplex)/i.test(t))
+                    return 'duplex';
+                if (/(townhouse|terrace|terraced)/i.test(t))
+                    return 'townhouse';
+                if (/(house|bungalow|villa)/i.test(t))
+                    return 'house';
+                if (/(land|plot)/i.test(t))
+                    return 'land';
+                if (/(studio|bedsitter|self\s*contain)/i.test(t))
+                    return 'studio';
+                if (/(condo)/i.test(t))
+                    return 'condo';
+                return null;
+            };
+            if (!property_type) {
+                const bc = $('.breadcrumb li a, .breadcrumb li, nav.breadcrumb li a, [class*="breadcrumb" i] li a')
+                    .map((_i, el) => $(el).text().trim())
+                    .get()
+                    .filter(Boolean)
+                    .join(' ');
+                property_type = typeFrom(bc);
+            }
+            if (!property_type) {
+                try {
+                    const u = new URL(url);
+                    const p = u.pathname.toLowerCase();
+                    if (p.includes('/flats-apartments'))
+                        property_type = 'apartment';
+                    else if (p.includes('/houses'))
+                        property_type = 'house';
+                    else if (p.includes('/duplex'))
+                        property_type = 'duplex';
+                    else if (p.includes('/townhouse') || p.includes('/terrace'))
+                        property_type = 'townhouse';
+                    else if (p.includes('/land'))
+                        property_type = 'land';
+                    else
+                        property_type = typeFrom(p);
+                }
+                catch { /* ignore */ }
+            }
+            if (!property_type) {
+                property_type = typeFrom(title) || typeFrom(bodyText);
+            }
+        }
+        catch { /* ignore */ }
+        // Map to typed PropertyType (or leave undefined if not recognized)
+        const mapToPropertyType = (s) => {
+            if (!s)
+                return undefined;
+            const v = String(s).toLowerCase();
+            if (v.includes('apartment') || v.includes('flat'))
+                return 'apartment';
+            if (v.includes('house') || v.includes('bungalow') || v.includes('villa'))
+                return 'house';
+            if (v.includes('duplex'))
+                return 'duplex';
+            if (v.includes('townhouse') || v.includes('terrace') || v.includes('terraced'))
+                return 'townhouse';
+            if (v.includes('land') || v.includes('plot'))
+                return 'land';
+            if (v.includes('studio') || v.includes('bedsitter') || v.includes('self contain'))
+                return 'studio';
+            if (v.includes('condo'))
+                return 'condo';
+            return undefined;
+        };
+        const propertyType = mapToPropertyType(property_type);
+        // Images: collect from JSON-LD, OG tags and visible gallery elements
+        let images = [];
+        try {
+            const seen = new Set();
+            const push = (s) => {
+                if (!s)
+                    return;
+                const t = String(s).trim();
+                if (!t)
+                    return;
+                if (/^data:image\//i.test(t))
+                    return; // skip inline data images
+                if (/sprite|icon|logo|placeholder|avatar|thumbs?/i.test(t))
+                    return; // skip non-photos
+                try {
+                    const abs = new URL(t, url).toString();
+                    if (!seen.has(abs)) {
+                        seen.add(abs);
+                        images.push(abs);
+                    }
+                }
+                catch { }
+            };
+            // JSON-LD
+            $('script[type="application/ld+json"]').each((_i, el) => {
+                const txt = $(el).contents().text();
+                if (!txt || txt.length < 5)
+                    return;
+                try {
+                    const data = JSON.parse(txt);
+                    const walk = (node) => {
+                        if (!node)
+                            return;
+                        if (Array.isArray(node)) {
+                            node.forEach(walk);
+                            return;
+                        }
+                        if (typeof node === 'object') {
+                            if (typeof node.image === 'string')
+                                push(node.image);
+                            if (Array.isArray(node.image))
+                                node.image.forEach((v) => push(v));
+                            if (node['@type'] === 'ImageObject' && typeof node.url === 'string')
+                                push(node.url);
+                            Object.values(node).forEach(walk);
+                        }
+                    };
+                    walk(data);
+                }
+                catch { /* ignore */ }
+            });
+            // OpenGraph
+            push($('meta[property="og:image"]').attr('content') || null);
+            // Visible <img> / <source>
+            $('img[src], img[data-src], source[srcset]').each((_i, el) => {
+                const $el = $(el);
+                const src = $el.attr('src') || $el.attr('data-src') || '';
+                const srcset = $el.attr('srcset') || '';
+                push(src);
+                if (srcset) {
+                    srcset.split(',').forEach(part => push(part.trim().split(' ')[0]));
+                }
+            });
+            // cap to 20
+            if (images.length > 20)
+                images = images.slice(0, 20);
+        }
+        catch { /* ignore */ }
         return {
             external_id,
             url,
             title,
             description: $('meta[name="description"]').attr('content') || null,
             price: priceNum,
-            currency: 'NGN',
+            currency,
             size: sizeMatch ? sizeMatch[0] : undefined,
             bedrooms: bedMatch ? Number(bedMatch[1]) : undefined,
             bathrooms: bathMatch ? Number(bathMatch[1]) : undefined,
+            images,
+            property_type: propertyType,
             // let normalizer infer property_type from body text/title
             address_line1,
             address_line2: null,

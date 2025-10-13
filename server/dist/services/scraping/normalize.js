@@ -43,12 +43,35 @@ function mapPropertyType(t) {
     return 'other';
 }
 export function normalizeToProperty(input) {
-    const { source, external_id, url, title, description, price, currency, size_sqm, size, bedrooms, bathrooms, property_type, address_line1, address_line2, neighborhood, city, state, postal_code, country, latitude, longitude, listed_at, listing_updated_at, first_seen_at, last_seen_at, is_active = true, raw, } = input;
+    const { source, external_id, url, title, description, price, currency, size_sqm, size, bedrooms, bathrooms, property_type, images, address_line1, address_line2, neighborhood, city, state, postal_code, country, latitude, longitude, listed_at, listing_updated_at, first_seen_at, last_seen_at, is_active = true, raw, } = input;
     // Compose a fallback address when a scraper doesn't provide a street/estate.
     // This favors completeness: address_line1 may include neighborhood/city/state/postal_code/country.
     const composedAddress = address_line1 ?? (() => {
         const parts = [neighborhood, city, state, postal_code, country].filter(Boolean).map((s) => String(s).trim());
         return parts.length ? parts.join(', ') : null;
+    })();
+    // Normalize images to a small, unique absolute URL list
+    const normImages = (() => {
+        try {
+            const arr = Array.isArray(images) ? images : (images ? [images] : []);
+            const cleaned = arr
+                .map((s) => {
+                try {
+                    return new URL(String(s), url).toString();
+                }
+                catch {
+                    return null;
+                }
+            })
+                .filter((s) => !!s)
+                .map((s) => s.trim());
+            const uniq = Array.from(new Set(cleaned));
+            // keep a reasonable max (e.g., first 20)
+            return uniq.slice(0, 20);
+        }
+        catch {
+            return null;
+        }
     })();
     return {
         source_id: source?.id,
@@ -63,6 +86,7 @@ export function normalizeToProperty(input) {
         bedrooms: toNumberSafe(bedrooms),
         bathrooms: toNumberSafe(bathrooms),
         property_type: mapPropertyType(property_type),
+        images: normImages && normImages.length ? normImages : null,
         address_line1: composedAddress,
         address_line2: address_line2 ?? null,
         neighborhood: neighborhood ?? null,

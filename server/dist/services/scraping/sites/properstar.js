@@ -1,6 +1,5 @@
 import * as cheerio from 'cheerio';
 import { BaseAdapter } from '../baseAdapter';
-import { getFxRate } from '../http';
 function absUrl(href, base) {
     if (!href)
         return null;
@@ -47,9 +46,11 @@ export class ProperstarAdapter extends BaseAdapter {
         // If any extra seeds are direct listing URLs, yield them immediately
         for (const u of extraSeeds) {
             try {
-                const p = new URL(u).pathname;
-                if (p.includes('/listing/'))
-                    yield u;
+                const uu = new URL(u);
+                if (uu.origin !== origin)
+                    continue;
+                if (uu.pathname.startsWith('/listing/'))
+                    yield uu.toString();
             }
             catch { /* ignore */ }
         }
@@ -79,13 +80,8 @@ export class ProperstarAdapter extends BaseAdapter {
                 const html = await ctx.http.getText(listUrl, ctx.requestTimeoutMs);
                 const $ = cheerio.load(html);
                 const candidates = [];
-                // Properstar pages have many anchors; capture both category and listing detail links
+                // Properstar pages have many anchors; capture only listing detail links
                 $([
-                    'a[href*="/sale"]',
-                    'a[href*="/buy"]',
-                    'a[href*="/rent"]',
-                    'a[title][href*="/sale"]',
-                    'a.card[href*="/sale"]',
                     'a[href*="/listing/"]',
                 ].join(', ')).each((_, a) => {
                     const href = String($(a).attr('href') || '');
@@ -100,16 +96,10 @@ export class ProperstarAdapter extends BaseAdapter {
                         const u = new URL(abs);
                         const segs = u.pathname.split('/').filter(Boolean);
                         // Accept explicit listing pages
-                        if (u.pathname.includes('/listing/')) {
+                        if (u.pathname.startsWith('/listing/')) {
                             candidates.push(abs);
                             return;
                         }
-                        // Otherwise, require country + (buy|sale|rent) + deeper path
-                        if (!(u.pathname.includes('/sale') || u.pathname.includes('/buy') || u.pathname.includes('/rent')))
-                            return;
-                        if (segs.length < 3)
-                            return; // avoid shallow category/nav
-                        candidates.push(abs);
                     }
                     catch { /* ignore */ }
                 });
@@ -174,11 +164,14 @@ export class ProperstarAdapter extends BaseAdapter {
                         candidates.push(u);
                 }
                 catch { /* ignore */ }
-                const unique = Array.from(new Set(candidates));
+                const unique = Array.from(new Set(candidates.filter(u => /\/listing\//.test(u))));
                 for (const u of unique) {
                     yielded++;
                     yield u;
                 }
+                // If no listings found on this page, stop early to avoid scraping empty lists
+                if (unique.length === 0)
+                    break;
             }
             // Update cursor to next page after processing
             try {
@@ -325,7 +318,7 @@ export class ProperstarAdapter extends BaseAdapter {
         let listingUpdatedAt = jsonDateModified || metaModified || null;
         if (!listedAt) {
             const text = $('body').text();
-            const addM = text.match(/(Added\s*On|Published\s*On|Listed\s*On)\s*:?\s*([^\n|]+)/i);
+            const addM = text.match(/(Added\s*On|Published\s*On|Listed\s*On)\s*:?:?\s*([^\n|]+)/i);
             if (addM && addM[2]) {
                 const d = new Date(addM[2].trim());
                 if (!isNaN(d.getTime()))
@@ -334,21 +327,97 @@ export class ProperstarAdapter extends BaseAdapter {
         }
         if (!listingUpdatedAt) {
             const text = $('body').text();
-            const updM = text.match(/(Last\s*Updated|Updated\s*On)\s*:?\s*([^\n|]+)/i);
+            const updM = text.match(/(Last\s*Updated|Updated\s*On)\s*:?:?\s*([^\n|]+)/i);
             if (updM && updM[2]) {
                 const d = new Date(updM[2].trim());
                 if (!isNaN(d.getTime()))
                     listingUpdatedAt = d.toISOString();
             }
         }
-        // Currency normalization for Nigeria: convert GBP -> NGN using FX rate
-        if (country === 'Nigeria' && currency === 'GBP' && typeof priceNum === 'number') {
-            try {
-                const rate = await getFxRate('GBP', 'NGN');
-                priceNum = Math.round(priceNum * rate);
+        // Images: JSON-LD, OpenGraph, visible elements
+        let images = [];
+        try {
+            const seen = new Set();
+            const push = (s) => {
+                if (!s)
+                    return;
+                const t = String(s).trim();
+                if (!t)
+                    return;
+                if (/^data:image\//i.test(t))
+                    return;
+                if (/sprite|icon|logo|placeholder|avatar|thumbs?/i.test(t))
+                    return;
+                try {
+                    const abs = new URL(t, url).toString();
+                    if (!seen.has(abs)) {
+                        seen.add(abs);
+                        images.push(abs);
+                    }
+                }
+                catch { }
+            };
+            $('script[type="application/ld+json"]').each((_i, el) => {
+                const txt = $(el).contents().text();
+                if (!txt || txt.length < 2)
+                    return;
+                try {
+                    const data = JSON.parse(txt);
+                    const walk = (node) => {
+                        if (!node)
+                            return;
+                        if (Array.isArray(node)) {
+                            node.forEach(walk);
+                            return;
+                        }
+                        if (typeof node === 'object') {
+                            if (typeof node.image === 'string')
+                                push(node.image);
+                            if (Array.isArray(node.image))
+                                node.image.forEach((v) => push(v));
+                            if (node['@type'] === 'ImageObject' && typeof node.url === 'string')
+                                push(node.url);
+                            Object.values(node).forEach(walk);
+                        }
+                    };
+                    walk(data);
+                }
+                catch { }
+            });
+            push($('meta[property="og:image"]').attr('content') || null);
+            $('img[src], img[data-src], source[srcset]').each((_i, el) => {
+                const $el = $(el);
+                const src = $el.attr('src') || $el.attr('data-src') || '';
+                const srcset = $el.attr('srcset') || '';
+                push(src);
+                if (srcset)
+                    srcset.split(',').forEach(part => push(part.trim().split(' ')[0]));
+            });
+            if (images.length > 20)
+                images = images.slice(0, 20);
+        }
+        catch { }
+        // Currency: use exactly what listing shows. Prefer JSON-LD offers.priceCurrency; fallback to symbol detection.
+        if (!currency) {
+            // Try common JSON-LD patterns already parsed above (offers->priceCurrency). If not captured, infer from symbols.
+            const priceLabel = pickText($('[data-testid="price"], .price, .pricetag, [itemprop="price"]')) || $('body').text();
+            if (/£|GBP/i.test(String(priceLabel)))
+                currency = 'GBP';
+            else if (/₦|NGN|naira/i.test(String(priceLabel)))
                 currency = 'NGN';
+            else if (/€|EUR/i.test(String(priceLabel)))
+                currency = 'EUR';
+            else if (/\$|USD/i.test(String(priceLabel)))
+                currency = 'USD';
+            // Fallback by site TLD/context
+            if (!currency) {
+                try {
+                    const u0 = new URL(url);
+                    if (u0.hostname.endsWith('.co.uk'))
+                        currency = 'GBP';
+                }
+                catch { /* ignore */ }
             }
-            catch { /* ignore FX failure; keep original */ }
         }
         return {
             external_id,
@@ -357,6 +426,7 @@ export class ProperstarAdapter extends BaseAdapter {
             description: $('meta[name="description"]').attr('content') || null,
             price: priceNum,
             currency,
+            images,
             size: sizeMatch ? sizeMatch[0] : undefined,
             bedrooms: bedMatch ? Number(bedMatch[1]) : undefined,
             bathrooms: bathMatch ? Number(bathMatch[1]) : undefined,

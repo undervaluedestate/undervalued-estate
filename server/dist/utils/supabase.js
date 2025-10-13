@@ -7,6 +7,16 @@ function assertEnv() {
     const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url)
         throw new Error('SUPABASE_URL is not set');
+    try {
+        // Validate that SUPABASE_URL is a valid absolute URL (e.g. https://xxxxx.supabase.co)
+        // This avoids cryptic errors like: 'The string did not match the expected pattern.'
+        // which can be thrown deeper in the stack if an invalid URL is provided.
+        // eslint-disable-next-line no-new
+        new URL(url);
+    }
+    catch {
+        throw new Error(`Invalid SUPABASE_URL: '${url}'. Expected a valid https URL like https://YOUR_PROJECT.supabase.co`);
+    }
     if (!anon)
         console.warn('Missing SUPABASE_ANON_KEY (public selects may fail)');
     if (!service)

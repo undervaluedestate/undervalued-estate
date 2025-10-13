@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio';
 import { BaseAdapter } from '../baseAdapter';
-import type { ScrapeContext } from '../../../types';
+import type { ScrapeContext, PropertyType } from '../../../types';
 
 function absUrl(href: string, base: string): string | null {
   if (!href) return null;
@@ -838,6 +838,21 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       }
     } catch { /* ignore */ }
 
+    // Map to typed PropertyType (or leave undefined if not recognized)
+    const mapToPropertyType = (s: string | null): PropertyType | undefined => {
+      if (!s) return undefined;
+      const v = String(s).toLowerCase();
+      if (v.includes('apartment') || v.includes('flat')) return 'apartment';
+      if (v.includes('house') || v.includes('bungalow') || v.includes('villa')) return 'house';
+      if (v.includes('duplex')) return 'duplex';
+      if (v.includes('townhouse') || v.includes('terrace') || v.includes('terraced')) return 'townhouse';
+      if (v.includes('land') || v.includes('plot')) return 'land';
+      if (v.includes('studio') || v.includes('bedsitter') || v.includes('self contain')) return 'studio';
+      if (v.includes('condo')) return 'condo';
+      return undefined;
+    };
+    const propertyType: PropertyType | undefined = mapToPropertyType(property_type);
+
     // Images: collect from JSON-LD, OG tags and visible gallery elements
     let images: string[] = [];
     try {
@@ -894,7 +909,7 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       bedrooms: bedMatch ? Number(bedMatch[1]) : undefined,
       bathrooms: bathMatch ? Number(bathMatch[1]) : undefined,
       images,
-      property_type,
+      property_type: propertyType,
       // let normalizer infer property_type from body text/title
       address_line1,
       address_line2: null,
