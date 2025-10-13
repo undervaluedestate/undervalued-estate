@@ -18,6 +18,44 @@ const PRIMELOCATION_UK: Region[] = [
 ];
 
 export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    try {
+      const url = new URL(request.url);
+      if (url.pathname !== '/proxy') return new Response('Not Found', { status: 404 });
+      const authHeader = request.headers.get('authorization') || '';
+      const token = authHeader.toLowerCase().startsWith('bearer ')
+        ? authHeader.slice(7).trim()
+        : (url.searchParams.get('token') || '');
+      if (!env.API_SECRET || token !== env.API_SECRET) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      const target = url.searchParams.get('url');
+      if (!target) return new Response('Missing url', { status: 400 });
+      let t: URL;
+      try { t = new URL(target); } catch { return new Response('Bad url', { status: 400 }); }
+      if (t.hostname !== 'www.primelocation.com') return new Response('Forbidden', { status: 403 });
+      const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+      };
+      const resp = await fetch(t.toString(), { method: 'GET', headers });
+      const body = await resp.text();
+      return new Response(body, {
+        status: resp.status,
+        headers: { 'content-type': resp.headers.get('content-type') || 'text/html; charset=UTF-8' },
+      });
+    } catch (e: any) {
+      return new Response(`Proxy error: ${e?.message || 'unknown'}`, { status: 500 });
+    }
+  },
   async scheduled(_event: any, env: Env, _ctx: any) {
     const { API_URL, API_SECRET } = env;
     if (!API_URL || !API_SECRET) return;

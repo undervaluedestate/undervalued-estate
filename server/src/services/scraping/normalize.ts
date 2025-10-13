@@ -49,6 +49,7 @@ export function normalizeToProperty(input: Partial<NormalizedProperty> & { exter
     bedrooms,
     bathrooms,
     property_type,
+    images,
     address_line1,
     address_line2,
     neighborhood,
@@ -73,6 +74,22 @@ export function normalizeToProperty(input: Partial<NormalizedProperty> & { exter
     return parts.length ? parts.join(', ') : null;
   })();
 
+  // Normalize images to a small, unique absolute URL list
+  const normImages: string[] | null = (() => {
+    try {
+      const arr = Array.isArray(images) ? images : (images ? [images as any] : []);
+      const cleaned = arr
+        .map((s) => {
+          try { return new URL(String(s), url).toString(); } catch { return null; }
+        })
+        .filter((s): s is string => !!s)
+        .map((s) => s.trim());
+      const uniq = Array.from(new Set(cleaned));
+      // keep a reasonable max (e.g., first 20)
+      return uniq.slice(0, 20);
+    } catch { return null; }
+  })();
+
   return {
     source_id: source?.id,
     external_id,
@@ -86,6 +103,7 @@ export function normalizeToProperty(input: Partial<NormalizedProperty> & { exter
     bedrooms: toNumberSafe(bedrooms),
     bathrooms: toNumberSafe(bathrooms),
     property_type: mapPropertyType(property_type),
+    images: normImages && normImages.length ? normImages : null,
     address_line1: composedAddress,
     address_line2: address_line2 ?? null,
     neighborhood: neighborhood ?? null,

@@ -32,6 +32,7 @@ export interface NormalizedProperty {
   bedrooms: number | null;
   bathrooms: number | null;
   property_type: PropertyType;
+  images: string[] | null;
   address_line1: string | null;
   address_line2: string | null;
   neighborhood: string | null;

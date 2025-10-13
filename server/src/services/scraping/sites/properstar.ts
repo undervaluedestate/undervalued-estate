@@ -44,8 +44,9 @@ export class ProperstarAdapter extends BaseAdapter {
     // If any extra seeds are direct listing URLs, yield them immediately
     for (const u of extraSeeds) {
       try {
-        const p = new URL(u).pathname;
-        if (p.includes('/listing/')) yield u;
+        const uu = new URL(u);
+        if (uu.origin !== origin) continue;
+        if (uu.pathname.startsWith('/listing/')) yield uu.toString();
       } catch {/* ignore */}
     }
     // Include extra seeds as bases for category discovery as well
@@ -90,7 +91,7 @@ export class ProperstarAdapter extends BaseAdapter {
             const u = new URL(abs);
             const segs = u.pathname.split('/').filter(Boolean);
             // Accept explicit listing pages
-            if (u.pathname.includes('/listing/')) {
+            if (u.pathname.startsWith('/listing/')) {
               candidates.push(abs);
               return;
             }
@@ -278,7 +279,7 @@ export class ProperstarAdapter extends BaseAdapter {
     let listingUpdatedAt = jsonDateModified || metaModified || null;
     if (!listedAt) {
       const text = $('body').text();
-      const addM = text.match(/(Added\s*On|Published\s*On|Listed\s*On)\s*:?\s*([^\n|]+)/i);
+      const addM = text.match(/(Added\s*On|Published\s*On|Listed\s*On)\s*:?:?\s*([^\n|]+)/i);
       if (addM && addM[2]) {
         const d = new Date(addM[2].trim());
         if (!isNaN(d.getTime())) listedAt = d.toISOString();
@@ -286,12 +287,51 @@ export class ProperstarAdapter extends BaseAdapter {
     }
     if (!listingUpdatedAt) {
       const text = $('body').text();
-      const updM = text.match(/(Last\s*Updated|Updated\s*On)\s*:?\s*([^\n|]+)/i);
+      const updM = text.match(/(Last\s*Updated|Updated\s*On)\s*:?:?\s*([^\n|]+)/i);
       if (updM && updM[2]) {
         const d = new Date(updM[2].trim());
         if (!isNaN(d.getTime())) listingUpdatedAt = d.toISOString();
       }
     }
+
+    // Images: JSON-LD, OpenGraph, visible elements
+    let images: string[] = [];
+    try {
+      const seen = new Set<string>();
+      const push = (s?: string | null) => {
+        if (!s) return; const t = String(s).trim(); if (!t) return;
+        if (/^data:image\//i.test(t)) return;
+        if (/sprite|icon|logo|placeholder|avatar|thumbs?/i.test(t)) return;
+        try { const abs = new URL(t, url).toString(); if (!seen.has(abs)) { seen.add(abs); images.push(abs); } } catch {}
+      };
+      $('script[type="application/ld+json"]').each((_i, el) => {
+        const txt = $(el).contents().text();
+        if (!txt || txt.length < 2) return;
+        try {
+          const data = JSON.parse(txt);
+          const walk = (node: any) => {
+            if (!node) return;
+            if (Array.isArray(node)) { node.forEach(walk); return; }
+            if (typeof node === 'object') {
+              if (typeof (node as any).image === 'string') push((node as any).image);
+              if (Array.isArray((node as any).image)) (node as any).image.forEach((v: any) => push(v));
+              if ((node as any)['@type'] === 'ImageObject' && typeof (node as any).url === 'string') push((node as any).url);
+              Object.values(node).forEach(walk);
+            }
+          };
+          walk(data);
+        } catch {}
+      });
+      push($('meta[property="og:image"]').attr('content') || null);
+      $('img[src], img[data-src], source[srcset]').each((_i, el) => {
+        const $el = $(el);
+        const src = $el.attr('src') || $el.attr('data-src') || '';
+        const srcset = $el.attr('srcset') || '';
+        push(src);
+        if (srcset) srcset.split(',').forEach(part => push(part.trim().split(' ')[0]));
+      });
+      if (images.length > 20) images = images.slice(0, 20);
+    } catch {}
 
     // Currency: use exactly what listing shows. Prefer JSON-LD offers.priceCurrency; fallback to symbol detection.
     if (!currency) {
@@ -317,6 +357,7 @@ export class ProperstarAdapter extends BaseAdapter {
       description: $('meta[name="description"]').attr('content') || null,
       price: priceNum,
       currency,
+      images,
       size: sizeMatch ? sizeMatch[0] : undefined,
       bedrooms: bedMatch ? Number(bedMatch[1]) : undefined,
       bathrooms: bathMatch ? Number(bathMatch[1]) : undefined,

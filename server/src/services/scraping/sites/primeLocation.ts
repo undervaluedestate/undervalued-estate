@@ -62,6 +62,9 @@ export class PrimeLocationAdapter extends BaseAdapter {
           else u.searchParams.set('pn', String(page));
           // Prefer newest listings if not already specified
           if (!u.searchParams.get('results_sort')) u.searchParams.set('results_sort', 'newest_listings');
+          // Add explicit search_source for WAF heuristics
+          const src = ctx.extra?.listingType === 'rent' ? 'to-rent' : 'for-sale';
+          if (!u.searchParams.get('search_source')) u.searchParams.set('search_source', src);
           listUrl = u.toString();
         } catch {}
 
@@ -195,6 +198,45 @@ export class PrimeLocationAdapter extends BaseAdapter {
 
     const country = 'United Kingdom';
 
+    // Images: JSON-LD, OpenGraph, visible <img>/<source>
+    let images: string[] = [];
+    try {
+      const seen = new Set<string>();
+      const push = (s?: string | null) => {
+        if (!s) return; const t = String(s).trim(); if (!t) return;
+        if (/^data:image\//i.test(t)) return;
+        if (/sprite|icon|logo|placeholder|avatar|thumbs?/i.test(t)) return;
+        try { const abs = new URL(t, url).toString(); if (!seen.has(abs)) { seen.add(abs); images.push(abs); } } catch {}
+      };
+      $('script[type="application/ld+json"]').each((_i, el) => {
+        const txt = $(el).contents().text();
+        if (!txt || txt.length < 5) return;
+        try {
+          const data = JSON.parse(txt);
+          const walk = (node: any) => {
+            if (!node) return;
+            if (Array.isArray(node)) { node.forEach(walk); return; }
+            if (typeof node === 'object') {
+              if (typeof (node as any).image === 'string') push((node as any).image);
+              if (Array.isArray((node as any).image)) (node as any).image.forEach((v: any) => push(v));
+              if (node['@type'] === 'ImageObject' && typeof (node as any).url === 'string') push((node as any).url);
+              Object.values(node).forEach(walk);
+            }
+          };
+          walk(data);
+        } catch {}
+      });
+      push($('meta[property="og:image"]').attr('content') || null);
+      $('img[src], img[data-src], source[srcset]').each((_i, el) => {
+        const $el = $(el);
+        const src = $el.attr('src') || $el.attr('data-src') || '';
+        const srcset = $el.attr('srcset') || '';
+        push(src);
+        if (srcset) srcset.split(',').forEach(part => push(part.trim().split(' ')[0]));
+      });
+      if (images.length > 20) images = images.slice(0, 20);
+    } catch {}
+
     return {
       external_id,
       url,
@@ -202,6 +244,7 @@ export class PrimeLocationAdapter extends BaseAdapter {
       description: $('meta[name="description"]').attr('content') || null,
       price,
       currency,
+      images,
       address_line1,
       address_line2,
       neighborhood,

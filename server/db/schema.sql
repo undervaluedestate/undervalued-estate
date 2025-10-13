@@ -323,6 +323,17 @@ begin
   end if;
 end$$;
 
+-- Ensure images column exists for storing property image URLs
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'properties' and column_name = 'images'
+  ) then
+    alter table public.properties add column images text[];
+  end if;
+end$$;
+
 -- =========================
 -- Benchmarks
 -- =========================

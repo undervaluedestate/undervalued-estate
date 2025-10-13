@@ -88,16 +88,21 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
           // Heuristic: ensure we are on sale/rent detail pages with enough depth
           try {
             const u = new URL(abs);
+            const p = u.pathname.toLowerCase();
+            // Skip non-listing informational pages (e.g., market trends/average prices)
+            if (p.includes('/market-trends') || p.includes('/average-prices')) return;
             const segs = u.pathname.split('/').filter(Boolean);
             const wantRent = listingType === 'rent';
             const hasSale = u.pathname.includes('/for-sale/');
             const hasRent = u.pathname.includes('/for-rent/');
-            if (listingType) {
-              if (wantRent && !hasRent) return;
-              if (!wantRent && !hasSale) return;
+            // Strong preference/requirement: URL should start with the expected base
+            if (wantRent) {
+              if (!p.startsWith('/for-rent/')) return;
             } else {
-              if (!(hasSale || hasRent)) return;
+              if (!p.startsWith('/for-sale/')) return;
             }
+            // Backward compatibility guard if listingType not provided
+            if (!listingType && !(hasSale || hasRent)) return;
             if (segs.length < 3) return; // avoid very shallow category pages
             candidates.push(abs);
           } catch { /* ignore */ }
@@ -770,6 +775,114 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       if (/₦|\bNGN\b|naira/i.test(String(priceLabel))) currency = 'NGN';
     } catch { /* default NGN */ }
 
+    // Property type: prefer explicit labeled value, details list, then breadcrumbs/URL/title keywords
+    let property_type: string | null = null;
+    try {
+      const typeFromLabels = readLabeledFromTables(['Property Type', 'Type', 'Property type']);
+      if (typeFromLabels) property_type = typeFromLabels;
+      // Also scan list-style detail rows for a "Property Type" field
+      if (!property_type) {
+        const rows = $('.property-details li, .details li, .key-details li, .facts li, .summary li').toArray();
+        for (const li of rows) {
+          const label = $(li).find('.name, .label, .title, strong').first().text().trim().toLowerCase();
+          let val = $(li).find('.value, .text').first().text().trim();
+          if (!val) {
+            // Fallback: remove label text from full li text
+            const full = $(li).text().replace(/\s+/g, ' ').trim();
+            val = full.replace(new RegExp(`^${label}\s*:?\s*`, 'i'), '').trim();
+          }
+          if (!val) continue;
+          if (label.includes('property type') || label === 'type') {
+            const low = val.toLowerCase();
+            // Ignore transaction types that may appear under generic 'Type'
+            if (/(for\s*sale|for\s*rent|short\s*let|lease)/i.test(low)) continue;
+            property_type = val;
+            break;
+          }
+        }
+      }
+      const typeFrom = (s?: string | null): string | null => {
+        if (!s) return null;
+        const t = String(s).toLowerCase();
+        if (/(apartment|flat)/i.test(t)) return 'apartment';
+        if (/(duplex)/i.test(t)) return 'duplex';
+        if (/(townhouse|terrace|terraced)/i.test(t)) return 'townhouse';
+        if (/(house|bungalow|villa)/i.test(t)) return 'house';
+        if (/(land|plot)/i.test(t)) return 'land';
+        if (/(studio|bedsitter|self\s*contain)/i.test(t)) return 'studio';
+        if (/(condo)/i.test(t)) return 'condo';
+        return null;
+      };
+      if (!property_type) {
+        const bc = $('.breadcrumb li a, .breadcrumb li, nav.breadcrumb li a, [class*="breadcrumb" i] li a')
+          .map((_i, el) => $(el).text().trim())
+          .get()
+          .filter(Boolean)
+          .join(' ');
+        property_type = typeFrom(bc);
+      }
+      if (!property_type) {
+        try {
+          const u = new URL(url);
+          const p = u.pathname.toLowerCase();
+          if (p.includes('/flats-apartments')) property_type = 'apartment';
+          else if (p.includes('/houses')) property_type = 'house';
+          else if (p.includes('/duplex')) property_type = 'duplex';
+          else if (p.includes('/townhouse') || p.includes('/terrace')) property_type = 'townhouse';
+          else if (p.includes('/land')) property_type = 'land';
+          else property_type = typeFrom(p);
+        } catch { /* ignore */ }
+      }
+      if (!property_type) {
+        property_type = typeFrom(title) || typeFrom(bodyText);
+      }
+    } catch { /* ignore */ }
+
+    // Images: collect from JSON-LD, OG tags and visible gallery elements
+    let images: string[] = [];
+    try {
+      const seen = new Set<string>();
+      const push = (s?: string | null) => {
+        if (!s) return; const t = String(s).trim(); if (!t) return;
+        if (/^data:image\//i.test(t)) return; // skip inline data images
+        if (/sprite|icon|logo|placeholder|avatar|thumbs?/i.test(t)) return; // skip non-photos
+        try { const abs = new URL(t, url).toString(); if (!seen.has(abs)) { seen.add(abs); images.push(abs); } } catch {}
+      };
+      // JSON-LD
+      $('script[type="application/ld+json"]').each((_i, el) => {
+        const txt = $(el).contents().text();
+        if (!txt || txt.length < 5) return;
+        try {
+          const data = JSON.parse(txt);
+          const walk = (node: any) => {
+            if (!node) return;
+            if (Array.isArray(node)) { node.forEach(walk); return; }
+            if (typeof node === 'object') {
+              if (typeof node.image === 'string') push(node.image);
+              if (Array.isArray((node as any).image)) (node as any).image.forEach((v: any) => push(v));
+              if (node['@type'] === 'ImageObject' && typeof (node as any).url === 'string') push((node as any).url);
+              Object.values(node).forEach(walk);
+            }
+          };
+          walk(data);
+        } catch { /* ignore */ }
+      });
+      // OpenGraph
+      push($('meta[property="og:image"]').attr('content') || null);
+      // Visible <img> / <source>
+      $('img[src], img[data-src], source[srcset]').each((_i, el) => {
+        const $el = $(el);
+        const src = $el.attr('src') || $el.attr('data-src') || '';
+        const srcset = $el.attr('srcset') || '';
+        push(src);
+        if (srcset) {
+          srcset.split(',').forEach(part => push(part.trim().split(' ')[0]));
+        }
+      });
+      // cap to 20
+      if (images.length > 20) images = images.slice(0, 20);
+    } catch { /* ignore */ }
+
     return {
       external_id,
       url,
@@ -780,6 +893,8 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
       size: sizeMatch ? sizeMatch[0] : undefined,
       bedrooms: bedMatch ? Number(bedMatch[1]) : undefined,
       bathrooms: bathMatch ? Number(bathMatch[1]) : undefined,
+      images,
+      property_type,
       // let normalizer infer property_type from body text/title
       address_line1,
       address_line2: null,

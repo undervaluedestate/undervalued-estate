@@ -166,7 +166,6 @@ export default function Benchmarks(): React.ReactElement {
                   <th style={{textAlign:'right'}}>Median</th>
                   <th style={{textAlign:'right'}}>Max</th>
                   <th style={{textAlign:'right'}}>Avg ppsqm</th>
-                  <th style={{textAlign:'left'}}>Listings</th>
                 </tr>
               </thead>
               <tbody>
@@ -182,7 +181,6 @@ export default function Benchmarks(): React.ReactElement {
                   if (r.bathrooms != null) params.set('bathrooms', String(r.bathrooms));
                   params.set('sort', 'price');
                   params.set('order', detailOrder);
-                  const href = `#deals?${params.toString()}`;
                   async function ensureDetail(){
                     // initialize
                     setDetails(prev => prev[rowKey] ? prev : { ...prev, [rowKey]: { loading: true, error: '', page: 1 } });
@@ -216,11 +214,10 @@ export default function Benchmarks(): React.ReactElement {
                     <td style={{textAlign:'right'}}>{formatMoney(r.median_price, r.currency)}</td>
                     <td style={{textAlign:'right'}}>{formatMoney(r.max_price, r.currency)}</td>
                     <td style={{textAlign:'right'}}>{formatMoney(r.avg_ppsqm, r.currency)}</td>
-                    <td><a className="badge" href={href} onClick={(e) => { e.stopPropagation(); }}>{'View'}</a></td>
                   </tr>
                   {expandedKey === rowKey && (
                     <tr key={`${idx}-detail`}>
-                      <td colSpan={14}>
+                      <td colSpan={13}>
                         <div className={`collapse ${expandedKey === rowKey ? 'open' : ''}`}>
                           <div className="card" style={{marginTop:8}}>
                             {details[rowKey]?.loading && <div>Loading listings…</div>}
@@ -265,7 +262,7 @@ export default function Benchmarks(): React.ReactElement {
                 })}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={14} style={{opacity:.7, padding:'12px 0'}}>No clusters found for current filters.</td>
+                    <td colSpan={13} style={{opacity:.7, padding:'12px 0'}}>No clusters found for current filters.</td>
                   </tr>
                 )}
               </tbody>

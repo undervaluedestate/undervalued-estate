@@ -175,6 +175,45 @@ export class ZooplaAdapter extends BaseAdapter {
     // Country
     const country = 'United Kingdom';
 
+    // Images: JSON-LD, OpenGraph, visible <img>/<source>
+    let images: string[] = [];
+    try {
+      const seen = new Set<string>();
+      const push = (s?: string | null) => {
+        if (!s) return; const t = String(s).trim(); if (!t) return;
+        if (/^data:image\//i.test(t)) return;
+        if (/sprite|icon|logo|placeholder|avatar|thumbs?/i.test(t)) return;
+        try { const abs = new URL(t, url).toString(); if (!seen.has(abs)) { seen.add(abs); images.push(abs); } } catch {}
+      };
+      $('script[type="application/ld+json"]').each((_i, el) => {
+        const txt = $(el).contents().text();
+        if (!txt || txt.length < 5) return;
+        try {
+          const data = JSON.parse(txt);
+          const walk = (node: any) => {
+            if (!node) return;
+            if (Array.isArray(node)) { node.forEach(walk); return; }
+            if (typeof node === 'object') {
+              if (typeof (node as any).image === 'string') push((node as any).image);
+              if (Array.isArray((node as any).image)) (node as any).image.forEach((v: any) => push(v));
+              if ((node as any)['@type'] === 'ImageObject' && typeof (node as any).url === 'string') push((node as any).url);
+              Object.values(node).forEach(walk);
+            }
+          };
+          walk(data);
+        } catch {}
+      });
+      push($('meta[property="og:image"]').attr('content') || null);
+      $('img[src], img[data-src], source[srcset]').each((_i, el) => {
+        const $el = $(el);
+        const src = $el.attr('src') || $el.attr('data-src') || '';
+        const srcset = $el.attr('srcset') || '';
+        push(src);
+        if (srcset) srcset.split(',').forEach(part => push(part.trim().split(' ')[0]));
+      });
+      if (images.length > 20) images = images.slice(0, 20);
+    } catch {}
+
     return {
       external_id,
       url,
@@ -182,6 +221,7 @@ export class ZooplaAdapter extends BaseAdapter {
       description: $('meta[name="description"]').attr('content') || null,
       price,
       currency,
+      images,
       address_line1,
       address_line2,
       neighborhood,
