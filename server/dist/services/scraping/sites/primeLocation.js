@@ -127,33 +127,114 @@ export class PrimeLocationAdapter extends BaseAdapter {
     }
     async parseListing(ctx, html, url) {
         const $ = cheerio.load(html);
-        const title = pickText($('h1')) || pickText($('meta[property="og:title"]')) || null;
-        // Price
-        let price = undefined;
-        const priceText = pickText($('[data-testid="price"], .price, [itemprop="price"]'))
-            || $('meta[property="og:price:amount"]').attr('content')
-            || null;
-        if (priceText) {
-            const num = Number(String(priceText).match(/[0-9,.]+/g)?.[0]?.replace(/,/g, ''));
-            if (Number.isFinite(num))
-                price = num;
-        }
-        let currency = 'GBP';
-        const bodyText = $('body').text();
-        if (/₦|NGN/i.test(String(priceText) + bodyText))
-            currency = 'NGN';
-        if (/£|GBP/i.test(String(priceText) + bodyText))
-            currency = 'GBP';
-        if (/€|EUR/i.test(String(priceText) + bodyText))
-            currency = 'EUR';
-        if (/\$|USD/i.test(String(priceText) + bodyText))
-            currency = 'USD';
+        // Canonical URL if provided
+        const url_canonical = $('link[rel="canonical"]').attr('href') || null;
+        // Determine listing type from URL
+        let listing_type = 'buy';
         try {
-            const u0 = new URL(url);
-            if (u0.hostname.endsWith('.co.uk'))
-                currency = 'GBP';
+            const u = new URL(url);
+            if (/\/to-rent\//i.test(u.pathname))
+                listing_type = 'rent';
         }
         catch { }
+        // Map string to typed PropertyType
+        const toPropertyType = (s) => {
+            if (!s)
+                return undefined;
+            const v = String(s).toLowerCase();
+            if (v.includes('apartment') || v.includes('flat'))
+                return 'apartment';
+            if (v.includes('house') || v.includes('bungalow') || v.includes('villa'))
+                return 'house';
+            if (v.includes('duplex'))
+                return 'duplex';
+            if (v.includes('townhouse') || v.includes('terrace') || v.includes('terraced'))
+                return 'townhouse';
+            if (v.includes('land') || v.includes('plot'))
+                return 'land';
+            if (v.includes('studio'))
+                return 'studio';
+            if (v.includes('condo'))
+                return 'condo';
+            return 'other';
+        };
+        const title = pickText($('h1')) || pickText($('meta[property="og:title"]')) || null;
+        // Price & Currency (prefer currency sign next to the price)
+        let price = undefined;
+        const priceSelector = $('[data-testid="price"], .price, [itemprop="price"]');
+        const priceText = pickText(priceSelector) || $('meta[property="og:price:amount"]').attr('content') || null;
+        const metaCurrency = $('meta[property="og:price:currency"]').attr('content') || $('meta[itemprop="priceCurrency"]').attr('content') || null;
+        const bodyText = $('body').text();
+        // Detect currency based on symbol/abbr appearing before the number
+        const detectCurrency = (txt) => {
+            if (!txt)
+                return null;
+            const s = String(txt);
+            // strong: symbol at start
+            const m0 = s.match(/^\s*(£|€|\$|₦)/);
+            if (m0) {
+                const sym = m0[1];
+                if (sym === '£')
+                    return 'GBP';
+                if (sym === '€')
+                    return 'EUR';
+                if (sym === '$')
+                    return 'USD';
+                if (sym === '₦')
+                    return 'NGN';
+            }
+            // otherwise: symbol immediately before digits anywhere
+            const m1 = s.match(/(£|€|\$|₦)\s*[0-9]/);
+            if (m1) {
+                const sym = m1[1];
+                if (sym === '£')
+                    return 'GBP';
+                if (sym === '€')
+                    return 'EUR';
+                if (sym === '$')
+                    return 'USD';
+                if (sym === '₦')
+                    return 'NGN';
+            }
+            // explicit codes
+            if (/\bGBP\b/i.test(s))
+                return 'GBP';
+            if (/\bEUR\b/i.test(s))
+                return 'EUR';
+            if (/\bUSD\b/i.test(s))
+                return 'USD';
+            if (/\bNGN\b/i.test(s))
+                return 'NGN';
+            return null;
+        };
+        // Parse numeric price: take the first number-like token
+        if (priceText) {
+            const nums = String(priceText).match(/[0-9][0-9,\.]{0,12}/g);
+            const first = nums?.[0];
+            if (first) {
+                const p = Number(first.replace(/,/g, ''));
+                if (Number.isFinite(p))
+                    price = p;
+            }
+        }
+        // Currency priority: from price sign -> meta -> domain fallback
+        let currency = detectCurrency(priceText) || metaCurrency || null;
+        if (!currency) {
+            try {
+                const u0 = new URL(url);
+                if (u0.hostname.endsWith('.co.uk'))
+                    currency = 'GBP';
+            }
+            catch { }
+        }
+        // Final fallback from body if still missing
+        if (!currency) {
+            const c2 = detectCurrency(bodyText);
+            if (c2)
+                currency = c2;
+        }
+        if (!currency)
+            currency = 'GBP';
         // External ID from URL like /details/XXXXXXX
         let external_id = url;
         try {
@@ -163,7 +244,7 @@ export class PrimeLocationAdapter extends BaseAdapter {
                 external_id = m[1];
         }
         catch { }
-        // Address & geo via JSON-LD if present
+        // Address & geo via JSON-LD if present (+ enrich: bedrooms/bathrooms/floorSize/property type)
         let address_line1 = null;
         let address_line2 = null;
         let postal_code = null;
@@ -171,6 +252,10 @@ export class PrimeLocationAdapter extends BaseAdapter {
         let longitude = null;
         let listed_at = null;
         let listing_updated_at = null;
+        let bedrooms = null;
+        let bathrooms = null;
+        let size_sqm = null;
+        let propertyType = undefined;
         try {
             $('script[type="application/ld+json"]').each((_i, el) => {
                 const txt = $(el).contents().text();
@@ -206,6 +291,40 @@ export class PrimeLocationAdapter extends BaseAdapter {
                                     longitude = lng;
                                 }
                             }
+                            // Bedrooms / Bathrooms
+                            const nb = Number(node.numberOfBedrooms ?? (node.offers && node.offers.numberOfBedrooms));
+                            if (Number.isFinite(nb) && bedrooms === null)
+                                bedrooms = nb;
+                            const nba = Number(node.numberOfBathroomsTotal ?? node.numberOfBathrooms ?? (node.offers && node.offers.numberOfBathrooms));
+                            if (Number.isFinite(nba) && bathrooms === null)
+                                bathrooms = nba;
+                            // Floor size (QuantitativeValue)
+                            const toSqm = (val) => {
+                                if (!val)
+                                    return null;
+                                try {
+                                    const v = Number(val.value ?? val);
+                                    const unit = String(val.unitCode ?? val.unitText ?? '').toUpperCase();
+                                    if (!Number.isFinite(v))
+                                        return null;
+                                    if (unit.includes('SQF') || unit.includes('FT'))
+                                        return Math.round((v / 10.7639) * 100) / 100;
+                                    if (unit.includes('M2') || unit.includes('SQM') || unit.includes('MTK'))
+                                        return Math.round(v * 100) / 100;
+                                    return null;
+                                }
+                                catch {
+                                    return null;
+                                }
+                            };
+                            const fs = (node.floorSize || (node['@type'] === 'QuantitativeValue' ? node : null));
+                            const sqm = Array.isArray(fs) ? (toSqm(fs[0]) ?? null) : toSqm(fs);
+                            if (sqm && size_sqm === null)
+                                size_sqm = sqm;
+                            // Property type
+                            const ptype = (typeof node.propertyType === 'string' ? node.propertyType : (typeof node['@type'] === 'string' ? node['@type'] : null));
+                            if (!propertyType && ptype)
+                                propertyType = toPropertyType(ptype);
                             Object.values(node).forEach(walk);
                         }
                     };
@@ -220,6 +339,42 @@ export class PrimeLocationAdapter extends BaseAdapter {
             const addrSel = pickText($('address, [data-testid="address"], .property-address, .css-16jl9ur-Text, .css-10klw3m-Text'));
             if (addrSel)
                 address_line1 = addrSel.replace(/\s+/g, ' ').trim();
+        }
+        // Bedrooms / bathrooms fallback via visible text
+        if (bedrooms === null) {
+            try {
+                const m = String(title + ' ' + bodyText).match(/(\d+)\s*bed(room)?s?/i);
+                if (m && m[1])
+                    bedrooms = Number(m[1]);
+            }
+            catch { }
+        }
+        if (bathrooms === null) {
+            try {
+                const m = String(bodyText).match(/(\d+)\s*bath(rooms?)?/i);
+                if (m && m[1])
+                    bathrooms = Number(m[1]);
+            }
+            catch { }
+        }
+        // Size fallback via visible text (sq ft or sqm)
+        if (size_sqm === null) {
+            try {
+                const m = String(bodyText).match(/([0-9][0-9,\.]{1,6})\s*(sq\s*ft|sqft|ft²|m2|m²|sqm)/i);
+                if (m && m[1]) {
+                    const val = Number(m[1].replace(/,/g, ''));
+                    const unit = m[2].toLowerCase();
+                    if (Number.isFinite(val))
+                        size_sqm = /(sq\s*ft|sqft|ft²)/i.test(unit) ? Math.round((val / 10.7639) * 100) / 100 : Math.round(val * 100) / 100;
+                }
+            }
+            catch { }
+        }
+        // Property type fallback from title/body and breadcrumbs
+        if (!propertyType) {
+            const crumbsTxt = $('[class*="crumb" i] a, nav.breadcrumb a, .breadcrumbs a').map((_, a) => $(a).text().trim()).get().join(' ');
+            const maybe = [title, crumbsTxt, bodyText].filter(Boolean).join(' ');
+            propertyType = toPropertyType(maybe) || undefined;
         }
         // Breadcrumbs -> neighborhood/city/state
         let city = null;
@@ -295,13 +450,68 @@ export class PrimeLocationAdapter extends BaseAdapter {
                 images = images.slice(0, 20);
         }
         catch { }
+        // Extract Key Features (best-effort)
+        let features = [];
+        try {
+            const push = (s) => { if (!s)
+                return; const t = String(s).trim(); if (t)
+                features.push(t); };
+            $('.key-features li, [data-testid="key-features"] li').each((_i, li) => push($(li).text()));
+            // Sections that contain "Key features"
+            $('section').each((_i, sec) => {
+                const txt = $(sec).text();
+                if (/key\s*features/i.test(txt))
+                    $('li', sec).each((_j, li) => push($(li).text()));
+            });
+            // Deduplicate (case-insensitive)
+            const norm = features.map(f => f.replace(/\s+/g, ' ').trim()).filter(Boolean);
+            const seen = new Set();
+            const uniq = [];
+            for (const f of norm) {
+                const k = f.toLowerCase();
+                if (seen.has(k))
+                    continue;
+                seen.add(k);
+                uniq.push(f);
+            }
+            features = uniq;
+        }
+        catch { }
+        // Extract details table (best-effort: table th/td or dl dt/dd)
+        const details = {};
+        try {
+            $('table').each((_i, tbl) => {
+                $('tr', tbl).each((_j, tr) => {
+                    const k = $(tr).find('th, td').first().text().trim();
+                    const v = $(tr).find('td').last().text().trim();
+                    if (k && v)
+                        details[k] = v;
+                });
+            });
+            $('dl').each((_i, dl) => {
+                const dts = $(dl).find('dt');
+                const dds = $(dl).find('dd');
+                dts.each((idx, dt) => {
+                    const k = $(dt).text().trim();
+                    const v = $(dds.get(idx)).text().trim();
+                    if (k && v)
+                        details[k] = v;
+                });
+            });
+        }
+        catch { }
         return {
             external_id,
             url,
+            url_canonical,
             title,
             description: $('meta[name="description"]').attr('content') || null,
             price,
             currency,
+            size_sqm,
+            bedrooms,
+            bathrooms,
+            property_type: propertyType,
             images,
             address_line1,
             address_line2,
@@ -309,14 +519,14 @@ export class PrimeLocationAdapter extends BaseAdapter {
             city,
             state,
             postal_code,
-            listing_type: 'buy',
+            listing_type,
             country,
             latitude,
             longitude,
             listed_at,
             listing_updated_at,
             is_active: true,
-            raw: { source: 'PrimeLocation', url },
+            raw: { source: 'PrimeLocation', url, features, details },
         };
     }
 }

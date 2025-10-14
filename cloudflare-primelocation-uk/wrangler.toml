@@ -3,8 +3,8 @@ main = "src/worker.ts"
 compatibility_date = "2024-01-01"
 
 [triggers]
-# Option B: rotate workers hourly; PrimeLocation at minute 07 on hours 1,5,9,13,17,21 (keeps buy window)
-crons = ["7 1,5,9,13,17,21 * * *"]
+# BUY-only windows (minute 07 => doRent=false) at the same frequency as NPC: hours 2,6,10,14,18,22
+crons = ["7 2,6,10,14,18,22 * * *"]
 
 [observability]
 enabled = true

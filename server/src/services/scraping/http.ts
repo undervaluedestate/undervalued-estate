@@ -32,14 +32,24 @@ export async function getText(url: string, timeoutMs?: number): Promise<string> 
     return typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
   } catch (err: any) {
     const status = err?.response?.status;
+    if (status) {
+      // eslint-disable-next-line no-console
+      console.warn('[http.getText] direct fetch failed', { url, status });
+    } else {
+      // eslint-disable-next-line no-console
+      console.warn('[http.getText] direct fetch error (no status)', { url, error: err?.message || String(err) });
+    }
     try {
       const u = new URL(url);
       const isPrimeLocation = /(^|\.)primelocation\.com$/i.test(u.hostname);
       const proxy = process.env.PRIMELOCATION_PROXY_URL;
       const apiSecret = process.env.API_SECRET;
-      if (status === 403 && isPrimeLocation && proxy && apiSecret) {
+      const shouldProxy = isPrimeLocation && proxy && apiSecret && (!status || status === 403 || status === 401 || status === 429);
+      if (shouldProxy) {
         const proxied = new URL(proxy);
         proxied.searchParams.set('url', url);
+        // eslint-disable-next-line no-console
+        console.log('[http.getText] proxy fallback engaged for PrimeLocation', { target: url, proxy: proxied.toString() });
         const resp2 = await http.get(proxied.toString(), {
           timeout: timeoutMs ?? http.defaults.timeout,
           headers: {
@@ -47,6 +57,8 @@ export async function getText(url: string, timeoutMs?: number): Promise<string> 
             Authorization: `Bearer ${apiSecret}`,
           },
         });
+        // eslint-disable-next-line no-console
+        console.log('[http.getText] proxy response', { status: (resp2 as any)?.status });
         return typeof resp2.data === 'string' ? resp2.data : JSON.stringify(resp2.data);
       }
     } catch { /* fall through */ }

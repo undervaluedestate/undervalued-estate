@@ -58,6 +58,41 @@ export default {
       console.log('[zoopla-uk-worker] health failed', e?.message || e);
     }
 
+    // Orchestrate PrimeLocation BUY runs during buy windows (no separate cron)
+    if (!doRent) {
+      try {
+        const nap = (ms: number) => new Promise(r => setTimeout(r, ms));
+        const PRIME_REGIONS: Region[] = [
+          { name: 'Aberdeen', startUrls: ['https://www.primelocation.com/for-sale/property/aberdeen/?q=Aberdeen&results_sort=newest_listings&search_source=for-sale&pn=1'] },
+          { name: 'Glasgow', startUrls: ['https://www.primelocation.com/for-sale/property/glasgow/?q=Glasgow&results_sort=newest_listings&search_source=for-sale&pn=1'] },
+          { name: 'Edinburgh', startUrls: ['https://www.primelocation.com/for-sale/property/edinburgh/?q=Edinburgh&results_sort=newest_listings&search_source=for-sale&pn=1'] },
+          { name: 'London', startUrls: ['https://www.primelocation.com/for-sale/property/london/?q=London&results_sort=newest_listings&search_source=for-sale&pn=1'] },
+          { name: 'Manchester', startUrls: ['https://www.primelocation.com/for-sale/property/manchester/?q=Manchester&results_sort=newest_listings&search_source=for-sale&pn=1'] }
+        ];
+        const primeGroups = chunk(PRIME_REGIONS, 10);
+        for (const [pi, group] of primeGroups.entries()) {
+          const body = {
+            adapterName: 'PrimeLocation',
+            regions: group,
+            regionConcurrency: 6,
+            concurrency: 2,
+            maxPages: 4,
+            maxUrls: 30,
+            requestTimeoutMs: 18000,
+            discoveryTimeoutMs: 12000,
+            listingType: 'buy',
+            respondQuick: true
+          } as const;
+          const res = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
+          const txt = await res.text();
+          console.log(`[zoopla-uk-worker][orchestrate] PrimeLocation BUY group ${pi+1}/${primeGroups.length}:`, res.status, txt.slice(0, 200));
+          await nap(100 + Math.floor(Math.random()*300));
+        }
+      } catch (e: any) {
+        console.log('[zoopla-uk-worker][orchestrate] PrimeLocation buy failed', e?.message || e);
+      }
+    }
+
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
     for (const [i, group] of groups.entries()) {
       const body = {
@@ -117,8 +152,8 @@ export default {
       try {
         // NigeriaPropertyCentre daily rent sweep (reduced to Lagos & Abuja)
         const NPC_REGIONS = [
-          { name: 'Lagos', paths: ['/for-rent/flats-apartments/lagos/'] },
-          { name: 'Abuja', paths: ['/for-rent/flats-apartments/abuja/'] },
+          { name: 'Lagos', paths: ['/for-sale/flats-apartments/lagos/'] },
+          { name: 'Abuja', paths: ['/for-sale/flats-apartments/abuja/'] },
         ];
         const body = {
           adapterName: 'NigeriaPropertyCentre',
