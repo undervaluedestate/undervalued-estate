@@ -345,27 +345,28 @@ export class PrimeLocationAdapter extends BaseAdapter {
       city = crumbs[crumbs.length - 2] || null;
       state = crumbs[crumbs.length - 3] || null;
     }
-    // Fallback: derive city from address_line1 when breadcrumbs missing city
-    if (!city && address_line1) {
+    // Right-to-left parse from address_line1: '<street>, <neighbourhood>, <city> <postcode>'
+    if (address_line1) {
       try {
-        // Remove UK postcode if present (e.g., AB10 1AA)
-        const cleaned = address_line1.replace(/[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}/gi, '').trim();
-        const rawParts = cleaned.split(',').map(s => s.trim()).filter(Boolean);
+        const rawParts = address_line1.split(',').map(s => s.trim()).filter(Boolean);
         const parts = rawParts.filter(p => !/^(united kingdom|england|scotland|wales|northern ireland)$/i.test(p));
-        if (parts.length >= 2) {
-          // If we know neighborhood, pick the token immediately after it
-          if (neighborhood) {
-            const nIdx = parts.findIndex(p => p.toLowerCase() === neighborhood!.toLowerCase() || neighborhood!.toLowerCase().includes(p.toLowerCase()) || p.toLowerCase().includes(neighborhood!.toLowerCase()));
-            if (nIdx >= 0 && nIdx < parts.length - 1) {
-              city = parts[nIdx + 1];
-            }
+        if (parts.length >= 1) {
+          const last = parts[parts.length - 1];
+          // Capture outward code (e.g., AB15) optionally followed by inward (e.g., 1AA)
+          const m = last.match(/([A-Za-z]{1,2}\d[A-Za-z0-9]?)(?:\s*\d[A-Za-z]{2})?$/i);
+          let cityFromAddr: string | null = null;
+          if (m) {
+            const outward = m[1].toUpperCase();
+            postal_code = outward; // per requirement: capture outward code
+            cityFromAddr = last.replace(m[0], '').trim().replace(/[,\s]+$/,'');
+          } else {
+            cityFromAddr = last.trim();
           }
-          // Otherwise choose the second token as likely city
-          if (!city) city = parts[1];
-        } else if (parts.length === 1) {
-          // Single token left; use it if it's alphabetic
-          const seg = parts[0];
-          if (/^[A-Za-z\-\s]{3,}$/.test(seg)) city = seg;
+          if (cityFromAddr) city = cityFromAddr;
+          // Neighbourhood is the token before the last when present
+          if (parts.length >= 2) {
+            neighborhood = parts[parts.length - 2] || neighborhood;
+          }
         }
       } catch { /* ignore */ }
     }

@@ -256,6 +256,7 @@ export class PrimeLocationAdapter extends BaseAdapter {
         let bathrooms = null;
         let size_sqm = null;
         let propertyType = undefined;
+        let cityFromJsonLd = null;
         try {
             $('script[type="application/ld+json"]').each((_i, el) => {
                 const txt = $(el).contents().text();
@@ -282,6 +283,11 @@ export class PrimeLocationAdapter extends BaseAdapter {
                                     address_line1 = parts.join(', ');
                                 if (!postal_code && pc)
                                     postal_code = String(pc);
+                                if (!cityFromJsonLd && locality)
+                                    try {
+                                        cityFromJsonLd = String(locality).trim();
+                                    }
+                                    catch { }
                             }
                             if (node.geo && typeof node.geo === 'object') {
                                 const lat = Number(node.geo.latitude ?? node.geo.lat);
@@ -414,7 +420,7 @@ export class PrimeLocationAdapter extends BaseAdapter {
             propertyType = toPropertyType(maybe) || undefined;
         }
         // Breadcrumbs -> neighborhood/city/state
-        let city = null;
+        let city = cityFromJsonLd;
         let state = null;
         let neighborhood = null;
         const crumbs = $('[class*="crumb" i] a, nav.breadcrumb a, .breadcrumbs a').map((_, a) => $(a).text().trim()).get().filter(Boolean);
@@ -423,23 +429,30 @@ export class PrimeLocationAdapter extends BaseAdapter {
             city = crumbs[crumbs.length - 2] || null;
             state = crumbs[crumbs.length - 3] || null;
         }
-        // Fallback: derive city from address_line1 when breadcrumbs missing city
-        if (!city && address_line1) {
+        // Right-to-left parse from address_line1: '<street>, <neighbourhood>, <city> <postcode>'
+        if (address_line1) {
             try {
-                // Remove UK postcode if present (e.g., AB10 1AA)
-                const cleaned = address_line1.replace(/[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}/gi, '').trim();
-                const parts = cleaned.split(',').map(s => s.trim()).filter(Boolean);
-                if (parts.length) {
-                    // Choose the last alphabetical segment as likely city
-                    for (let i = parts.length - 1; i >= 0; i--) {
-                        const seg = parts[i];
-                        if (/^[A-Za-z\-\s]{3,}$/.test(seg) && !/^(united kingdom|england|scotland|wales|northern ireland)$/i.test(seg)) {
-                            city = seg;
-                            break;
-                        }
+                const rawParts = address_line1.split(',').map(s => s.trim()).filter(Boolean);
+                const parts = rawParts.filter(p => !/^(united kingdom|england|scotland|wales|northern ireland)$/i.test(p));
+                if (parts.length >= 1) {
+                    const last = parts[parts.length - 1];
+                    // Capture outward code (e.g., AB15) optionally followed by inward (e.g., 1AA)
+                    const m = last.match(/([A-Za-z]{1,2}\d[A-Za-z0-9]?)(?:\s*\d[A-Za-z]{2})?$/i);
+                    let cityFromAddr = null;
+                    if (m) {
+                        const outward = m[1].toUpperCase();
+                        postal_code = outward; // per requirement: capture outward code
+                        cityFromAddr = last.replace(m[0], '').trim().replace(/[,\s]+$/, '');
                     }
-                    if (!city)
-                        city = parts[parts.length - 1];
+                    else {
+                        cityFromAddr = last.trim();
+                    }
+                    if (cityFromAddr)
+                        city = cityFromAddr;
+                    // Neighbourhood is the token before the last when present
+                    if (parts.length >= 2) {
+                        neighborhood = parts[parts.length - 2] || neighborhood;
+                    }
                 }
             }
             catch { /* ignore */ }
