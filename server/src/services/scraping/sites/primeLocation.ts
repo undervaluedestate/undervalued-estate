@@ -350,17 +350,22 @@ export class PrimeLocationAdapter extends BaseAdapter {
       try {
         // Remove UK postcode if present (e.g., AB10 1AA)
         const cleaned = address_line1.replace(/[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}/gi, '').trim();
-        const parts = cleaned.split(',').map(s => s.trim()).filter(Boolean);
-        if (parts.length) {
-          // Choose the last alphabetical segment as likely city
-          for (let i = parts.length - 1; i >= 0; i--) {
-            const seg = parts[i];
-            if (/^[A-Za-z\-\s]{3,}$/.test(seg) && !/^(united kingdom|england|scotland|wales|northern ireland)$/i.test(seg)) {
-              city = seg;
-              break;
+        const rawParts = cleaned.split(',').map(s => s.trim()).filter(Boolean);
+        const parts = rawParts.filter(p => !/^(united kingdom|england|scotland|wales|northern ireland)$/i.test(p));
+        if (parts.length >= 2) {
+          // If we know neighborhood, pick the token immediately after it
+          if (neighborhood) {
+            const nIdx = parts.findIndex(p => p.toLowerCase() === neighborhood!.toLowerCase() || neighborhood!.toLowerCase().includes(p.toLowerCase()) || p.toLowerCase().includes(neighborhood!.toLowerCase()));
+            if (nIdx >= 0 && nIdx < parts.length - 1) {
+              city = parts[nIdx + 1];
             }
           }
-          if (!city) city = parts[parts.length - 1];
+          // Otherwise choose the second token as likely city
+          if (!city) city = parts[1];
+        } else if (parts.length === 1) {
+          // Single token left; use it if it's alphabetic
+          const seg = parts[0];
+          if (/^[A-Za-z\-\s]{3,}$/.test(seg)) city = seg;
         }
       } catch { /* ignore */ }
     }
