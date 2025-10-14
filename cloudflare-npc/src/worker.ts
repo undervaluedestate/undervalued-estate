@@ -23,24 +23,10 @@ export default {
       hour12: false
     }).formatToParts(now);
     const minute = Number(parts.find(p => p.type === 'minute')?.value ?? now.getUTCMinutes());
-    const doRent = (minute % 30) >= 15; // toggle buy/rent (Europe/London)
+    const doRent = false; // Force BUY-only runs
 
     const chunk = <T,>(arr: T[], size: number) => arr.reduce((acc: T[][], _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), [] as T[][]);
-    const npcRegionsEff = NPC_REGIONS.map(r => {
-      if (!doRent) return r;
-      const rr: RegionDef = { name: r.name };
-      if (r.paths && r.paths.length) rr.paths = r.paths.map(p => p.replace('/for-sale/', '/for-rent/'));
-      if (r.startUrls && r.startUrls.length) rr.startUrls = r.startUrls.map(u => {
-        try {
-          const url = new URL(u);
-          url.pathname = url.pathname.replace('/for-sale', '/for-rent');
-          return url.toString();
-        } catch {
-          return u.replace('/for-sale', '/for-rent');
-        }
-      });
-      return rr;
-    });
+    const npcRegionsEff = NPC_REGIONS; // keep /for-sale/ only
     const groups = chunk(npcRegionsEff, 10);
 
     // Quick health: ensure API responds 202 with respondQuick
@@ -72,12 +58,12 @@ export default {
         maxUrls: 30,
         requestTimeoutMs: 18000,
         discoveryTimeoutMs: 12000,
-        listingType: doRent ? 'rent' : 'buy',
+        listingType: 'buy',
         respondQuick: true
       } as const;
       const res = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
       const txt = await res.text();
-      console.log(`[npc-worker] ${doRent ? 'RENT' : 'BUY'} group ${i+1}/${groups.length}:`, res.status, txt.slice(0, 200));
+      console.log(`[npc-worker] BUY group ${i+1}/${groups.length}:`, res.status, txt.slice(0, 200));
       // jitter 100–400ms to reduce lock contention at cron edges
       await sleep(100 + Math.floor(Math.random()*300));
     }

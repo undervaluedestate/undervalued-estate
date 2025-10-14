@@ -151,10 +151,32 @@ router.get('/cities', async (req: Request, res: Response) => {
       seen.set(c, (seen.get(c) || 0) + 1);
     }
     const list = Array.from(seen.entries()).map(([name, count]) => ({ name, count }))
-      .sort((a,b) => b.count - a.count || a.name.localeCompare(b.name));
+      .sort((a,b) => a.name.localeCompare(b.name));
     res.json({ data: list });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch cities' });
+  }
+});
+
+// GET /api/clusters/countries - fetch distinct countries for dropdown
+router.get('/countries', async (_req: Request, res: Response) => {
+  try {
+    const supa = getAnonClient();
+    const { data, error } = await supa.from('v_search_results')
+      .select('country')
+      .eq('listing_type', 'buy')
+      .not('country','is', null)
+      .limit(5000);
+    if (error) throw error;
+    const set = new Set<string>();
+    for (const r of (data || []) as any[]) {
+      const c = r.country as string | null; if (!c) continue;
+      set.add(c);
+    }
+    const list = Array.from(set).sort((a,b) => a.localeCompare(b));
+    res.json({ data: list });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch countries' });
   }
 });
 

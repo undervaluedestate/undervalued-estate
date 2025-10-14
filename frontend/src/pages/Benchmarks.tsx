@@ -52,6 +52,9 @@ export default function Benchmarks(): React.ReactElement {
   const [cities, setCities] = useState<{ name: string; count: number }[]>([]);
   const [citiesLoading, setCitiesLoading] = useState<boolean>(false);
   const [citiesError, setCitiesError] = useState<string>('');
+  const [countries, setCountries] = useState<string[]>([]);
+  const [countriesLoading, setCountriesLoading] = useState<boolean>(false);
+  const [countriesError, setCountriesError] = useState<string>('');
   const [detailOrder, setDetailOrder] = useState<'asc'|'desc'>('asc');
 
   const queryString = useMemo(() => {
@@ -97,11 +100,33 @@ export default function Benchmarks(): React.ReactElement {
 
   useEffect(() => { fetchCities(); }, [filters.country]);
 
+  async function fetchCountries(){
+    setCountriesLoading(true); setCountriesError('');
+    try{
+      const res = await fetch(`${API_URL}/api/clusters/countries`);
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setCountries((json.data as string[]) || []);
+    }catch(e:any){
+      setCountriesError(e.message || 'Failed to load countries');
+    }finally{
+      setCountriesLoading(false);
+    }
+  }
+
+  useEffect(() => { fetchCountries(); }, []);
+
   return (
     <section>
       <div className="card" style={{marginBottom:12}}>
         <div className="filters">
-          <input className="input" placeholder="Country" value={filters.country} onChange={e=>setFilters({...filters, country: e.target.value, city: ''})} />
+          <select className="select" value={filters.country} onChange={e=>setFilters({...filters, country: e.target.value, city: ''})}>
+            <option value="">Select country… {countriesLoading ? '(loading…)': ''}</option>
+            {countries.map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          {countriesError && <span style={{color:'var(--warning)'}}>Countries: {countriesError}</span>}
           <select className="select" value={filters.city} onChange={e=>setFilters({...filters, city: e.target.value})}>
             <option value="">Select city… {citiesLoading ? '(loading…)': ''}</option>
             {cities.map(c => (

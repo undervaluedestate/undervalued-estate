@@ -155,15 +155,15 @@ export default {
     }).formatToParts(now);
     const hour = Number(parts.find(p => p.type === 'hour')?.value ?? now.getUTCHours());
     const minute = Number(parts.find(p => p.type === 'minute')?.value ?? now.getUTCMinutes());
-    const doRent = (minute % 30) >= 15; // :00/:30 => buy, :15/:45 => rent (Europe/London)
+    const doRent = (minute % 30) >= 15; // keep for other schedulers, but NPC will be BUY-only
     const regionSeeds = hour % 2 === 0 ? UK_SEEDS : NIGERIA_SEEDS;
 
     try {
       // Helper: chunk an array
       const chunk = <T,>(arr: T[], size: number) => arr.reduce((acc: T[][], _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), [] as T[][]);
 
-      // 1) NPC multi-region fan-out (40+ regions). Convert to rent paths if doRent
-      const npcRegionsEff = NPC_REGIONS.map(r => doRent ? ({ name: r.name.replace('Lagos', 'Lagos'), paths: r.paths.map(p => p.replace('/for-sale/', '/for-rent/')) }) : r);
+      // 1) NPC multi-region fan-out (BUY-only)
+      const npcRegionsEff = NPC_REGIONS;
       const npcChunks = chunk(npcRegionsEff, 10); // 4–5 backend calls instead of 1 huge call
       for (const [i, group] of npcChunks.entries()) {
         const npcBody = {
@@ -175,11 +175,11 @@ export default {
           maxUrls: 50,
           requestTimeoutMs: 20000,
           discoveryTimeoutMs: 15000,
-          listingType: doRent ? 'rent' : 'buy'
+          listingType: 'buy'
         };
         const npcRes = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(npcBody) });
         const npcTxt = await npcRes.text();
-        console.log(`[scheduled] NPC ${doRent ? 'RENT' : 'BUY'} group ${i+1}/${npcChunks.length}:`, npcRes.status, npcTxt.slice(0, 200));
+        console.log(`[scheduled] NPC BUY group ${i+1}/${npcChunks.length}:`, npcRes.status, npcTxt.slice(0, 200));
       }
 
       // 3) Benchmarks refresh

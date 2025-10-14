@@ -150,7 +150,7 @@ export default {
       }
 
       try {
-        // NigeriaPropertyCentre daily rent sweep (reduced to Lagos & Abuja)
+        // NigeriaPropertyCentre daily BUY sweep (reduced to Lagos & Abuja)
         const NPC_REGIONS = [
           { name: 'Lagos', paths: ['/for-sale/flats-apartments/lagos/'] },
           { name: 'Abuja', paths: ['/for-sale/flats-apartments/abuja/'] },
@@ -164,7 +164,7 @@ export default {
           maxUrls: 30,
           requestTimeoutMs: 18000,
           discoveryTimeoutMs: 12000,
-          listingType: 'rent',
+          listingType: 'buy',
           respondQuick: true
         } as const;
         const res = await fetch(`${API_URL}/api/scrape/run`, { method: 'POST', headers, body: JSON.stringify(body) });
