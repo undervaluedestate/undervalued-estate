@@ -25,6 +25,32 @@ export async function getText(url, timeoutMs) {
         referer = new URL(url).origin;
     }
     catch { /* ignore */ }
+    // Pre-check: force proxy for PrimeLocation if configured
+    try {
+        const u = new URL(url);
+        const isPrimeLocation = /(^|\.)primelocation\.com$/i.test(u.hostname);
+        const proxy = process.env.PRIMELOCATION_PROXY_URL;
+        const apiSecret = process.env.API_SECRET;
+        const force = String(process.env.PRIMELOCATION_FORCE_PROXY || '').trim();
+        const forceOn = isPrimeLocation && proxy && apiSecret && (force === '1' || /^true$/i.test(force));
+        if (forceOn) {
+            const proxied = new URL(proxy);
+            proxied.searchParams.set('url', url);
+            // eslint-disable-next-line no-console
+            console.log('[http.getText] FORCE proxy for PrimeLocation', { target: url, proxy: proxied.toString() });
+            const resp = await http.get(proxied.toString(), {
+                timeout: timeoutMs ?? http.defaults.timeout,
+                headers: {
+                    ...(referer ? { Referer: referer } : {}),
+                    Authorization: `Bearer ${apiSecret}`,
+                },
+            });
+            // eslint-disable-next-line no-console
+            console.log('[http.getText] FORCE proxy response', { status: resp?.status });
+            return typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+        }
+    }
+    catch { /* ignore and fall through */ }
     try {
         const resp = await http.get(url, {
             timeout: timeoutMs ?? http.defaults.timeout,

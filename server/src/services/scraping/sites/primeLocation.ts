@@ -211,6 +211,7 @@ export class PrimeLocationAdapter extends BaseAdapter {
     let bathrooms: number | null = null;
     let size_sqm: number | null = null;
     let propertyType: PropertyType | undefined = undefined;
+    let cityFromJsonLd: string | null = null;
     try {
       $('script[type="application/ld+json"]').each((_i, el) => {
         const txt = $(el).contents().text();
@@ -231,6 +232,7 @@ export class PrimeLocationAdapter extends BaseAdapter {
                 const parts = [street, locality, region].filter(Boolean).map((s: any) => String(s).trim());
                 if (parts.length && !address_line1) address_line1 = parts.join(', ');
                 if (!postal_code && pc) postal_code = String(pc);
+                if (!cityFromJsonLd && locality) try { cityFromJsonLd = String(locality).trim(); } catch {}
               }
               if (node.geo && typeof node.geo === 'object') {
                 const lat = Number(node.geo.latitude ?? node.geo.lat);
@@ -282,6 +284,26 @@ export class PrimeLocationAdapter extends BaseAdapter {
       });
     } catch {}
 
+    // Fallback: parse "Listed on" / "Added on" from visible text (e.g., search result cards)
+    if (!listed_at) {
+      try {
+        const text = $('body').text();
+        // Examples: "Listed on 22nd May 2025", "Added on 3rd June 2025"
+        const m = text.match(/\b(Listed on|Added on)\s+(\d{1,2})(st|nd|rd|th)?\s+([A-Za-z]+)\s+(\d{4})/i);
+        if (m) {
+          const day = Number(m[2]);
+          const monthName = m[4];
+          const year = Number(m[5]);
+          const months = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+          const mi = months.indexOf(monthName.toLowerCase());
+          if (day >= 1 && day <= 31 && mi >= 0 && year >= 1900) {
+            const iso = new Date(Date.UTC(year, mi, day)).toISOString();
+            listed_at = iso;
+          }
+        }
+      } catch {}
+    }
+
     // Address fallback from visible selectors
     if (!address_line1) {
       const addrSel = pickText($('address, [data-testid="address"], .property-address, .css-16jl9ur-Text, .css-10klw3m-Text'));
@@ -316,12 +338,31 @@ export class PrimeLocationAdapter extends BaseAdapter {
     }
 
     // Breadcrumbs -> neighborhood/city/state
-    let city: string | null = null; let state: string | null = null; let neighborhood: string | null = null;
+    let city: string | null = cityFromJsonLd; let state: string | null = null; let neighborhood: string | null = null;
     const crumbs = $('[class*="crumb" i] a, nav.breadcrumb a, .breadcrumbs a').map((_, a) => $(a).text().trim()).get().filter(Boolean);
     if (crumbs.length) {
       neighborhood = crumbs[crumbs.length - 1] || null;
       city = crumbs[crumbs.length - 2] || null;
       state = crumbs[crumbs.length - 3] || null;
+    }
+    // Fallback: derive city from address_line1 when breadcrumbs missing city
+    if (!city && address_line1) {
+      try {
+        // Remove UK postcode if present (e.g., AB10 1AA)
+        const cleaned = address_line1.replace(/[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}/gi, '').trim();
+        const parts = cleaned.split(',').map(s => s.trim()).filter(Boolean);
+        if (parts.length) {
+          // Choose the last alphabetical segment as likely city
+          for (let i = parts.length - 1; i >= 0; i--) {
+            const seg = parts[i];
+            if (/^[A-Za-z\-\s]{3,}$/.test(seg) && !/^(united kingdom|england|scotland|wales|northern ireland)$/i.test(seg)) {
+              city = seg;
+              break;
+            }
+          }
+          if (!city) city = parts[parts.length - 1];
+        }
+      } catch { /* ignore */ }
     }
 
     const country = 'United Kingdom';
@@ -409,6 +450,37 @@ export class PrimeLocationAdapter extends BaseAdapter {
       });
     } catch {}
 
+    // Capture specific metadata into raw: tenure, EPC rating, council tax band
+    const pickDetail = (keys: string[]): string | null => {
+      const entries = Object.entries(details);
+      for (const [k, v] of entries) {
+        if (keys.some(kk => k.toLowerCase().includes(kk))) return v;
+      }
+      return null;
+    };
+    let tenure: string | null = pickDetail(['tenure']) || null;
+    // Also detect tenure from features/body text (Freehold/Leasehold)
+    if (!tenure) {
+      const txt = [features.join(' | '), $('body').text()].join(' | ');
+      const m = txt.match(/\b(Freehold|Leasehold|Share of Freehold)\b/i);
+      if (m) tenure = m[1];
+    }
+    let epc_rating: string | null = pickDetail(['epc', 'energy performance']) || null;
+    if (!epc_rating) {
+      const t = $('body').text();
+      const m = t.match(/EPC[^A-Za-z0-9]*([A-G][+\-]?)/i);
+      if (m) epc_rating = m[1].toUpperCase();
+    }
+    let council_tax_band: string | null = pickDetail(['council tax', 'council-tax']) || null;
+    if (council_tax_band) {
+      const m = council_tax_band.match(/band\s*([A-H])/i);
+      if (m) council_tax_band = m[1].toUpperCase();
+    } else {
+      const t = $('body').text();
+      const m = t.match(/council\s*tax\s*band\s*([A-H])/i);
+      if (m) council_tax_band = m[1].toUpperCase();
+    }
+
     return {
       external_id,
       url,
@@ -435,7 +507,7 @@ export class PrimeLocationAdapter extends BaseAdapter {
       listed_at,
       listing_updated_at,
       is_active: true,
-      raw: { source: 'PrimeLocation', url, features, details },
+      raw: { source: 'PrimeLocation', url, features, details, tenure, epc_rating, council_tax_band },
     } as any;
   }
 }
