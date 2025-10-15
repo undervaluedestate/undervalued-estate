@@ -148,11 +148,36 @@ router.get('/cities', async (req, res) => {
             seen.set(c, (seen.get(c) || 0) + 1);
         }
         const list = Array.from(seen.entries()).map(([name, count]) => ({ name, count }))
-            .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+            .sort((a, b) => a.name.localeCompare(b.name));
         res.json({ data: list });
     }
     catch (err) {
         res.status(500).json({ error: err?.message || 'Failed to fetch cities' });
+    }
+});
+// GET /api/clusters/countries - fetch distinct countries for dropdown
+router.get('/countries', async (_req, res) => {
+    try {
+        const supa = getAnonClient();
+        const { data, error } = await supa.from('v_search_results')
+            .select('country')
+            .eq('listing_type', 'buy')
+            .not('country', 'is', null)
+            .limit(5000);
+        if (error)
+            throw error;
+        const set = new Set();
+        for (const r of (data || [])) {
+            const c = r.country;
+            if (!c)
+                continue;
+            set.add(c);
+        }
+        const list = Array.from(set).sort((a, b) => a.localeCompare(b));
+        res.json({ data: list });
+    }
+    catch (err) {
+        res.status(500).json({ error: err?.message || 'Failed to fetch countries' });
     }
 });
 export default router;

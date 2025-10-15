@@ -808,14 +808,56 @@ export class NigeriaPropertyCentreAdapter extends BaseAdapter {
                     listingUpdatedAt = d.toISOString();
             }
         }
-        // Currency: use exactly what listing shows; NPC is NGN, but detect symbols explicitly
+        // Currency: derive from the currency sign immediately preceding the price in the price label
         let currency = 'NGN';
         try {
-            const priceLabel = pickText($('.price, .price-label, [itemprop="price"], .amount')) || bodyText;
-            if (/₦|\bNGN\b|naira/i.test(String(priceLabel)))
-                currency = 'NGN';
+            const priceLabel = pickText($('.price, .price-label, [itemprop="price"], .amount')) || priceText || '';
+            const detectCurrency = (txt) => {
+                if (!txt)
+                    return null;
+                const s = String(txt);
+                // Prefer a sign directly before digits
+                const m1 = s.match(/(₦|£|€|\$)\s*[0-9]/);
+                if (m1) {
+                    const sym = m1[1];
+                    if (sym === '₦')
+                        return 'NGN';
+                    if (sym === '£')
+                        return 'GBP';
+                    if (sym === '€')
+                        return 'EUR';
+                    if (sym === '$')
+                        return 'USD';
+                }
+                // Or sign at start
+                const m0 = s.match(/^\s*(₦|£|€|\$)/);
+                if (m0) {
+                    const sym = m0[1];
+                    if (sym === '₦')
+                        return 'NGN';
+                    if (sym === '£')
+                        return 'GBP';
+                    if (sym === '€')
+                        return 'EUR';
+                    if (sym === '$')
+                        return 'USD';
+                }
+                // Explicit codes
+                if (/\bNGN\b|naira/i.test(s))
+                    return 'NGN';
+                if (/\bGBP\b/i.test(s))
+                    return 'GBP';
+                if (/\bUSD\b/i.test(s))
+                    return 'USD';
+                if (/\bEUR\b/i.test(s))
+                    return 'EUR';
+                return null;
+            };
+            const cur = detectCurrency(priceLabel) || detectCurrency(bodyText);
+            if (cur)
+                currency = cur;
         }
-        catch { /* default NGN */ }
+        catch { /* keep default NGN */ }
         // Property type: prefer explicit labeled value, details list, then breadcrumbs/URL/title keywords
         let property_type = null;
         try {

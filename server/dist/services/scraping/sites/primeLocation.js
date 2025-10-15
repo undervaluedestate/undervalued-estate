@@ -158,7 +158,11 @@ export class PrimeLocationAdapter extends BaseAdapter {
                 return 'condo';
             return 'other';
         };
-        const title = pickText($('h1')) || pickText($('meta[property="og:title"]')) || null;
+        const title = pickText($('h1'))
+            || $('meta[property="og:title"]').attr('content')
+            || $('title').text().trim()
+            || null;
+        const propertyTypeFromTitle = toPropertyType(title);
         // Price & Currency (prefer currency sign next to the price)
         let price = undefined;
         const priceSelector = $('[data-testid="price"], .price, [itemprop="price"]');
@@ -357,23 +361,44 @@ export class PrimeLocationAdapter extends BaseAdapter {
             });
         }
         catch { }
-        // Fallback: parse "Listed on" / "Added on" from visible text (e.g., search result cards)
+        // Prefer title-derived property type if JSON-LD didn't provide one
+        if (!propertyType && propertyTypeFromTitle && propertyTypeFromTitle !== 'other') {
+            propertyType = propertyTypeFromTitle;
+        }
+        // Fallback: parse "Listed on" / "Added on" from visible text (detail page)
         if (!listed_at) {
             try {
                 const text = $('body').text();
-                // Examples: "Listed on 22nd May 2025", "Added on 3rd June 2025"
-                const m = text.match(/\b(Listed on|Added on)\s+(\d{1,2})(st|nd|rd|th)?\s+([A-Za-z]+)\s+(\d{4})/i);
-                if (m) {
+                const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+                const parseMonthDate = (t) => {
+                    const m = t.match(/\b(Listed on|Added on)\s+(\d{1,2})(st|nd|rd|th)?\s+([A-Za-z]{3,9})\s+(\d{4})/i);
+                    if (!m)
+                        return null;
                     const day = Number(m[2]);
                     const monthName = m[4];
                     const year = Number(m[5]);
-                    const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
                     const mi = months.indexOf(monthName.toLowerCase());
                     if (day >= 1 && day <= 31 && mi >= 0 && year >= 1900) {
-                        const iso = new Date(Date.UTC(year, mi, day)).toISOString();
-                        listed_at = iso;
+                        return new Date(Date.UTC(year, mi, day)).toISOString();
                     }
-                }
+                    return null;
+                };
+                const parseSlashDate = (t) => {
+                    // UK format dd/mm/yyyy or dd/mm/yy
+                    const m = t.match(/\b(Listed on|Added on)\s+(\d{1,2})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{2,4})\b/i);
+                    if (!m)
+                        return null;
+                    let day = Number(m[2]);
+                    let month = Number(m[3]);
+                    let year = Number(m[4]);
+                    if (year < 100)
+                        year += (year >= 70 ? 1900 : 2000);
+                    if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year >= 1900) {
+                        return new Date(Date.UTC(year, month - 1, day)).toISOString();
+                    }
+                    return null;
+                };
+                listed_at = parseMonthDate(text) || parseSlashDate(text) || listed_at;
             }
             catch { }
         }
