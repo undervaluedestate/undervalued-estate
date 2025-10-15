@@ -56,6 +56,8 @@ export default function Benchmarks(): React.ReactElement {
   const [countriesLoading, setCountriesLoading] = useState<boolean>(false);
   const [countriesError, setCountriesError] = useState<string>('');
   const [detailOrder, setDetailOrder] = useState<'asc'|'desc'>('asc');
+  const [openImages, setOpenImages] = useState<Record<string, Record<string, boolean>>>({});
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -117,6 +119,7 @@ export default function Benchmarks(): React.ReactElement {
   useEffect(() => { fetchCountries(); }, []);
 
   return (
+    <>
     <section>
       <div className="card" style={{marginBottom:12}}>
         <div className="filters">
@@ -257,25 +260,55 @@ export default function Benchmarks(): React.ReactElement {
                               </div>
                             )}
                             <div style={{marginTop:8}}>
-                              {(details[rowKey]?.items || []).map((it: any) => (
-                                <div key={it.id} className="meta" style={{justifyContent:'space-between', padding:'8px 0', borderTop:'1px solid rgba(255,255,255,.06)'}}>
-                                  <div style={{display:'flex', gap:8}}>
-                                    <div style={{fontWeight:600}}>{it.title || 'Listing'}</div>
-                                    <div style={{opacity:.8}}>{[it.neighborhood, it.city, it.state].filter(Boolean).join(', ')}</div>
+                              {(details[rowKey]?.items || []).map((it: any) => {
+                                const toggle = () => {
+                                  setOpenImages(prev => {
+                                    const next = { ...prev } as Record<string, Record<string, boolean>>;
+                                    const perRow = { ...(next[rowKey] || {}) };
+                                    perRow[it.id] = !perRow[it.id];
+                                    next[rowKey] = perRow;
+                                    return next;
+                                  });
+                                };
+                                const ptLabel = it.property_type_label || (it.property_type ? String(it.property_type).charAt(0).toUpperCase() + String(it.property_type).slice(1) : '');
+                                const rawImgs: string[] = Array.isArray(it.images) ? (it.images as string[]).filter(Boolean) : [];
+                                const uniqImages: string[] = Array.from(new Set(rawImgs.map((s: string) => {
+                                  try { return new URL(String(s), it.url).toString(); } catch { return String(s); }
+                                }).filter(Boolean))).slice(0, 12) as string[];
+                                const open = !!(openImages[rowKey] && openImages[rowKey][it.id]);
+                                return (
+                                  <div key={it.id} style={{padding:'8px 0', borderTop:'1px solid rgba(255,255,255,.06)'}}> 
+                                    <div className="meta row-hover" role="button" tabIndex={0} onClick={toggle} onKeyDown={(e)=>{ if(e.key==='Enter') toggle(); }} style={{justifyContent:'space-between', cursor:'pointer'}}>
+                                      <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                                        {ptLabel && <span className="badge" style={{background:'rgba(255,255,255,.08)'}}>{ptLabel}</span>}
+                                        <div style={{fontWeight:600}}>{it.title || 'Listing'}</div>
+                                        <div style={{opacity:.8}}>{[it.neighborhood, it.city, it.state].filter(Boolean).join(', ')}</div>
+                                      </div>
+                                      <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                                        <div>{formatMoney(it.price, it.currency)}</div>
+                                        <div>•</div>
+                                        <div>{it.size_sqm ? `${it.size_sqm} sqm` : '—'}</div>
+                                        <div>•</div>
+                                        <div>{it.price_per_sqm ? formatMoney(it.price_per_sqm, it.currency) : '—'} /sqm</div>
+                                        <div><a className="badge" href={it.url} target="_blank" rel="noreferrer" onClick={(e)=>e.stopPropagation()}>Open Listing</a></div>
+                                      </div>
+                                    </div>
+                                    {open && (
+                                      <div style={{marginTop:8}}>
+                                        {uniqImages.length ? (
+                                          <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(140px, 1fr))', gap:8}}>
+                                            {uniqImages.map((u: string) => (
+                                              <img key={u} src={u} alt="Listing image" style={{width:'100%', height:120, objectFit:'cover', borderRadius:6, border:'1px solid rgba(255,255,255,.08)', background:'#111'}} onClick={(e)=>{ e.stopPropagation(); setLightboxSrc(u); }} />
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <div style={{opacity:.7}}>No images for this listing.</div>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
-                                  <div style={{display:'flex', gap:8}}>
-                                    <div>{formatMoney(it.price, it.currency)}</div>
-                                    <div>•</div>
-                                    <div>{it.size_sqm ? `${it.size_sqm} sqm` : '—'}</div>
-                                    <div>•</div>
-                                    <div>{it.price_per_sqm ? formatMoney(it.price_per_sqm, it.currency) : '—'} /sqm</div>
-                                    <div><a className="badge" href={it.url} target="_blank" rel="noreferrer">Open Listing</a></div>
-                                  </div>
-                                </div>
-                              ))}
-                              {(!details[rowKey] || (details[rowKey]?.items || []).length === 0) && !details[rowKey]?.loading && (
-                                <div style={{opacity:.7}}>No listings in this cluster.</div>
-                              )}
+                                );
+                              })}
                             </div>
                           </div>
                         </div>
@@ -296,5 +329,11 @@ export default function Benchmarks(): React.ReactElement {
         </div>
       )}
     </section>
+    {lightboxSrc && (
+      <div onClick={()=>setLightboxSrc(null)} style={{position:'fixed', inset:0, background:'rgba(0,0,0,.8)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000}}>
+        <img src={lightboxSrc || undefined} alt="Preview" style={{maxWidth:'90vw', maxHeight:'90vh', objectFit:'contain', borderRadius:8, boxShadow:'0 10px 30px rgba(0,0,0,.4)'}} />
+      </div>
+    )}
+    </>
   );
 }

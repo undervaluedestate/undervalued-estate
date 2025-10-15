@@ -117,6 +117,24 @@ router.get('/city/detail', async (req: Request, res: Response) => {
     const { data, error, count } = await q;
     if (error) throw error;
     const items = data || [];
+    // Enrich items with images from properties table (v_search_results doesn't include images)
+    let itemsWithImages = items as any[];
+    try {
+      const ids = (items as any[]).map((it: any) => it.id).filter(Boolean);
+      if (ids.length) {
+        const { data: imgs, error: imgErr } = await getAnonClient().from('properties').select('id,images,raw').in('id', ids);
+        if (!imgErr && imgs) {
+          const mapImgs = new Map<string, string[] | null>();
+          const mapLabel = new Map<string, string | null>();
+          for (const r of imgs) {
+            mapImgs.set(r.id, Array.isArray(r.images) ? r.images : null);
+            const lbl = r.raw && typeof r.raw === 'object' ? (r.raw.property_type_label ?? null) : null;
+            mapLabel.set(r.id, typeof lbl === 'string' && lbl ? lbl : null);
+          }
+          itemsWithImages = (items as any[]).map((it: any) => ({ ...it, images: mapImgs.get(it.id) ?? null, property_type_label: mapLabel.get(it.id) ?? null }));
+        }
+      }
+    } catch {}
     const prices = items.map((a: any) => a.price).filter((n: any): n is number => typeof n === 'number').sort((a: number,b: number)=>a-b);
     const ppsqm = items.map((a: any) => a.price_per_sqm).filter((n: any): n is number => typeof n === 'number');
     const stats = {
@@ -126,7 +144,7 @@ router.get('/city/detail', async (req: Request, res: Response) => {
       max_price: prices.length ? prices[prices.length - 1] : null,
       avg_ppsqm: ppsqm.length ? (ppsqm.reduce((a:number,b:number)=>a+b,0) / ppsqm.length) : null,
     };
-    res.json({ stats, data: items, count: count ?? items.length });
+    res.json({ stats, data: itemsWithImages, count: count ?? items.length });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch cluster detail' });
   }

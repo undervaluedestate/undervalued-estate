@@ -26,9 +26,11 @@ function mapPropertyType(t: any): PropertyType {
   if (!t) return 'other';
   const s = String(t).toLowerCase();
   if (s.includes('duplex')) return 'duplex';
+  if (s.includes('maisonette')) return 'apartment';
   if (s.includes('apartment') || s.includes('flat')) return 'apartment';
   if (s.includes('house') || s.includes('bungalow') || s.includes('villa')) return 'house';
-  if (s.includes('townhouse') || s.includes('terrace')) return 'townhouse';
+  if (s.includes('terrace') || s.includes('terraced')) return 'house';
+  if (s.includes('townhouse')) return 'townhouse';
   if (s.includes('land') || s.includes('plot')) return 'land';
   if (s.includes('studio') || s.includes('bedsitter')) return 'studio';
   if (s.includes('condo')) return 'condo';

@@ -121,9 +121,12 @@ export class PrimeLocationAdapter extends BaseAdapter {
       if (!s) return undefined;
       const v = String(s).toLowerCase();
       if (v.includes('apartment') || v.includes('flat')) return 'apartment';
+      if (v.includes('maisonette')) return 'apartment';
       if (v.includes('house') || v.includes('bungalow') || v.includes('villa')) return 'house';
       if (v.includes('duplex')) return 'duplex';
-      if (v.includes('townhouse') || v.includes('terrace') || v.includes('terraced')) return 'townhouse';
+      // Treat any terraced pattern as a house (normalized), we preserve exact label separately
+      if (v.includes('terrace') || v.includes('terraced') || /end\s*of\s*terrace/.test(v)) return 'house';
+      if (v.includes('townhouse')) return 'townhouse';
       if (v.includes('land') || v.includes('plot')) return 'land';
       if (v.includes('studio')) return 'studio';
       if (v.includes('condo')) return 'condo';
@@ -135,6 +138,26 @@ export class PrimeLocationAdapter extends BaseAdapter {
       || $('title').text().trim()
       || null;
     const propertyTypeFromTitle = toPropertyType(title);
+
+    // Derive a user-facing property type label from title (UK oriented)
+    const deriveTypeLabelFromTitle = (t?: string | null): string | null => {
+      if (!t) return null;
+      const s = String(t).toLowerCase();
+      if (/\bstudio\b/.test(s)) return 'Studio';
+      if (/\bmaisonette\b/.test(s)) return 'Maisonette';
+      if (/\bflat\b/.test(s)) return 'Flat';
+      if (/\bapartment\b/.test(s)) return 'Apartment';
+      if (/(end\s*(of\s*)?terrace|mid\s*terrace|terraced\s*house|\bterrace\b)/.test(s)) return 'Terraced House';
+      if (/semi[-\s]?detached/.test(s)) return 'Semi-Detached House';
+      if (/\bdetached\b/.test(s)) return 'Detached House';
+      if (/\bbungalow\b/.test(s)) return 'Bungalow';
+      if (/\btown\s*house|townhouse/.test(s)) return 'Townhouse';
+      if (/\bduplex\b/.test(s)) return 'Duplex';
+      if (/\bland\b|\bplot\b/.test(s)) return 'Land';
+      if (/\bhouse\b/.test(s)) return 'House';
+      return null;
+    };
+    const propertyTypeLabelFromTitle = deriveTypeLabelFromTitle(title);
 
     // Price & Currency (prefer currency sign next to the price)
     let price: number | undefined = undefined;
@@ -288,8 +311,8 @@ export class PrimeLocationAdapter extends BaseAdapter {
       });
     } catch {}
 
-    // Prefer title-derived property type if JSON-LD didn't provide one
-    if (!propertyType && propertyTypeFromTitle && propertyTypeFromTitle !== 'other') {
+    // Prefer title-derived property type if JSON-LD didn't provide one or mapped to 'other'
+    if ((!propertyType || propertyType === 'other') && propertyTypeFromTitle && propertyTypeFromTitle !== 'other') {
       propertyType = propertyTypeFromTitle;
     }
 
@@ -536,7 +559,7 @@ export class PrimeLocationAdapter extends BaseAdapter {
       listed_at,
       listing_updated_at,
       is_active: true,
-      raw: { source: 'PrimeLocation', url, features, details, tenure, epc_rating, council_tax_band },
+      raw: { source: 'PrimeLocation', url, features, details, tenure, epc_rating, council_tax_band, property_type_label: propertyTypeLabelFromTitle || null },
     } as any;
   }
 }
