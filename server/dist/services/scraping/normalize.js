@@ -29,14 +29,16 @@ function mapPropertyType(t) {
     if (s.includes('duplex'))
         return 'duplex';
     if (s.includes('maisonette'))
-        return 'apartment';
-    if (s.includes('apartment') || s.includes('flat'))
+        return 'maisonette';
+    if (s.includes('flat'))
+        return 'flat';
+    if (s.includes('apartment'))
         return 'apartment';
     if (s.includes('house') || s.includes('bungalow') || s.includes('villa'))
         return 'house';
-    if (s.includes('terrace') || s.includes('terraced'))
-        return 'house';
-    if (s.includes('townhouse'))
+    if (s.includes('terraced') || /end\s*of\s*terrace/.test(s) || /mid\s*terrace/.test(s) || /\bterrace\b/.test(s))
+        return 'terraced_house';
+    if (s.includes('townhouse') || s.includes('terrace'))
         return 'townhouse';
     if (s.includes('land') || s.includes('plot'))
         return 'land';

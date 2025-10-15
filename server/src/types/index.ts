@@ -3,6 +3,9 @@ export type UUID = string;
 export type PropertyType =
   | 'house'
   | 'apartment'
+  | 'flat'
+  | 'terraced_house'
+  | 'maisonette'
   | 'condo'
   | 'townhouse'
   | 'land'

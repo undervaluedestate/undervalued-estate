@@ -1,19 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import Header from '../components/Header';
 import Filters from '../components/Filters';
 import Results from '../components/Results';
 import Benchmarks from './Benchmarks';
+import Login from './Login';
+import Support from './Support';
+import Admin from './Admin';
+import { supabase } from '../lib/supabaseClient';
 
 const API_URL =
   import.meta.env.VITE_API_URL ||
   (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:4000');
-const SUPABASE_URL: string | undefined = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY: string | undefined = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-const supabase: SupabaseClient | null = (SUPABASE_URL && SUPABASE_ANON_KEY)
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  : null;
 
 type FiltersState = {
   q: string;
@@ -37,6 +34,8 @@ type FiltersState = {
 
 export default function App(){
   const [route, setRoute] = useState<string>(() => (typeof window !== 'undefined' ? (window.location.hash.replace('#','') || 'deals') : 'deals'));
+  const [session, setSession] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [filters, setFilters] = useState<FiltersState>({
     q: '',
     country: 'Nigeria',
@@ -85,6 +84,40 @@ export default function App(){
     return () => window.removeEventListener('hashchange', applyHash);
   }, []);
 
+  // Auth session and profile
+  useEffect(() => {
+    if (!supabase) return;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const sess = data?.session || null;
+      setSession(sess);
+      if (sess?.access_token) {
+        try {
+          const me = await fetch(`${API_URL}/api/auth/me`, {
+            headers: { Authorization: `Bearer ${sess.access_token}` },
+          }).then(r => r.json());
+          if (me?.profile) setProfile(me.profile);
+        } catch {}
+      } else {
+        setProfile(null);
+      }
+    })();
+    const sub = supabase.auth.onAuthStateChange(async (_event: any, sess2: any) => {
+      setSession(sess2);
+      if (sess2?.access_token) {
+        try {
+          const me = await fetch(`${API_URL}/api/auth/me`, {
+            headers: { Authorization: `Bearer ${sess2.access_token}` },
+          }).then(r => r.json());
+          if (me?.profile) setProfile(me.profile);
+        } catch { setProfile(null); }
+      } else {
+        setProfile(null);
+      }
+    });
+    return () => { sub.data.subscription.unsubscribe(); };
+  }, []);
+
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
     (Object.entries(filters) as [string, string][]).forEach(([k,v]) => {
@@ -123,10 +156,28 @@ export default function App(){
     return () => { supabase.removeChannel(channel); };
   }, []);
 
+  const handleLogout = useCallback(async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    window.location.hash = '#deals';
+  }, []);
+
   return (
     <div className="container">
-      <Header />
-      {route === 'benchmarks' ? (
+      <Header session={!!session} isAdmin={profile?.role === 'admin'} onLogout={handleLogout} />
+      {route === 'login' ? (
+        <section>
+          <Login />
+        </section>
+      ) : route === 'support' ? (
+        <section>
+          <Support session={session} />
+        </section>
+      ) : route === 'admin' ? (
+        <section>
+          <Admin session={session} isAdmin={profile?.role === 'admin'} />
+        </section>
+      ) : route === 'benchmarks' ? (
         <>
           <section>
             <Benchmarks />

@@ -10,7 +10,61 @@ create extension if not exists pgcrypto;
 do $$
 begin
   if not exists (select 1 from pg_type where typname = 'property_type_enum') then
-    create type property_type_enum as enum ('house', 'apartment', 'condo', 'townhouse', 'land', 'duplex', 'studio', 'other');
+    create type property_type_enum as enum ('house', 'apartment', 'flat', 'terraced_house', 'maisonette', 'condo', 'townhouse', 'land', 'duplex', 'studio', 'other');
+  end if;
+end$$;
+
+-- Keep conversation updated_at fresh on new messages
+create or replace function public.bump_conversation_timestamp()
+returns trigger
+language plpgsql
+as $$
+begin
+  update public.support_conversations set updated_at = now() where id = new.conversation_id;
+  return new;
+end;
+$$;
+
+do $$
+begin
+  if not exists (select 1 from pg_trigger where tgname = 'on_support_message_insert') then
+    create trigger on_support_message_insert
+    after insert on public.support_messages
+    for each row execute function public.bump_conversation_timestamp();
+  end if;
+end$$;
+
+-- Explicit grants for client roles
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on public.profiles to anon, authenticated;
+grant select, insert, update, delete on public.support_conversations to anon, authenticated;
+grant select, insert, update, delete on public.support_messages to anon, authenticated;
+
+-- Upgrade path: add new enum values if the type already existed
+do $$
+begin
+  if exists (select 1 from pg_type where typname = 'property_type_enum') then
+    -- flat
+    if not exists (
+      select 1 from pg_type t join pg_enum e on t.oid = e.enumtypid
+      where t.typname = 'property_type_enum' and e.enumlabel = 'flat'
+    ) then
+      alter type property_type_enum add value 'flat';
+    end if;
+    -- terraced_house
+    if not exists (
+      select 1 from pg_type t join pg_enum e on t.oid = e.enumtypid
+      where t.typname = 'property_type_enum' and e.enumlabel = 'terraced_house'
+    ) then
+      alter type property_type_enum add value 'terraced_house';
+    end if;
+    -- maisonette
+    if not exists (
+      select 1 from pg_type t join pg_enum e on t.oid = e.enumtypid
+      where t.typname = 'property_type_enum' and e.enumlabel = 'maisonette'
+    ) then
+      alter type property_type_enum add value 'maisonette';
+    end if;
   end if;
 end$$;
 
@@ -746,3 +800,189 @@ create table if not exists public.scheduled_runs (
 create unique index if not exists idx_properties_source_external
 on public.properties (source_id, external_id);
 
+-- =========================
+-- Users, Roles, and Support Chat
+-- =========================
+
+-- Role enum for app users
+do $$
+begin
+  if not exists (select 1 from pg_type where typname = 'user_role_enum') then
+    create type user_role_enum as enum ('user','admin');
+  end if;
+end$$;
+
+-- Profiles table: one row per auth.user
+create table if not exists public.profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  role user_role_enum not null default 'user',
+  display_name text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.profiles enable row level security;
+
+-- Helper: is the current user an admin?
+create or replace function public.is_admin() returns boolean
+language sql stable
+as $$
+  select exists (
+    select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'admin'
+  );
+$$;
+grant execute on function public.is_admin() to anon, authenticated;
+
+-- RLS policies for profiles
+do $$
+begin
+  -- A user can select/update their own profile
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='profiles' and policyname='profiles_read_own'
+  ) then
+    create policy profiles_read_own on public.profiles for select using (user_id = auth.uid());
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='profiles' and policyname='profiles_update_own'
+  ) then
+    create policy profiles_update_own on public.profiles for update using (user_id = auth.uid());
+  end if;
+  -- Admin can select/update any
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='profiles' and policyname='profiles_admin_all_select'
+  ) then
+    create policy profiles_admin_all_select on public.profiles for select using (public.is_admin());
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='profiles' and policyname='profiles_admin_all_update'
+  ) then
+    create policy profiles_admin_all_update on public.profiles for update using (public.is_admin());
+  end if;
+  -- Allow authenticated users to insert their own profile (fallback if trigger not used)
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='profiles' and policyname='profiles_insert_own'
+  ) then
+    create policy profiles_insert_own on public.profiles for insert with check (user_id = auth.uid());
+  end if;
+end$$;
+
+-- Optional trigger to auto-create a profile on new user signup
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (user_id, display_name)
+  values (new.id, coalesce(new.email, ''))
+  on conflict (user_id) do nothing;
+  return new;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_trigger where tgname = 'on_auth_user_created'
+  ) then
+    create trigger on_auth_user_created
+    after insert on auth.users
+    for each row execute function public.handle_new_user();
+  end if;
+end$$;
+
+-- Support conversations
+create table if not exists public.support_conversations (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  status text not null default 'open', -- 'open' | 'closed'
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists idx_support_conversations_user on public.support_conversations(user_id);
+alter table public.support_conversations enable row level security;
+
+-- Support messages
+create table if not exists public.support_messages (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.support_conversations(id) on delete cascade,
+  from_role user_role_enum not null,
+  sender_id uuid not null references auth.users(id) on delete cascade,
+  body text not null,
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_support_messages_convo on public.support_messages(conversation_id, created_at);
+alter table public.support_messages enable row level security;
+
+-- RLS policies for support_conversations
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='support_conversations' and policyname='conv_user_access'
+  ) then
+    create policy conv_user_access on public.support_conversations for select using (user_id = auth.uid());
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='support_conversations' and policyname='conv_user_insert'
+  ) then
+    create policy conv_user_insert on public.support_conversations for insert with check (user_id = auth.uid());
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='support_conversations' and policyname='conv_user_update'
+  ) then
+    create policy conv_user_update on public.support_conversations for update using (user_id = auth.uid());
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='support_conversations' and policyname='conv_admin_all'
+  ) then
+    create policy conv_admin_all on public.support_conversations for all using (public.is_admin());
+  end if;
+end$$;
+
+-- RLS policies for support_messages
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='support_messages' and policyname='msg_select'
+  ) then
+    create policy msg_select on public.support_messages for select using (
+      exists (
+        select 1 from public.support_conversations sc
+        where sc.id = support_messages.conversation_id
+          and (sc.user_id = auth.uid() or public.is_admin())
+      )
+    );
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='support_messages' and policyname='msg_insert_user'
+  ) then
+    create policy msg_insert_user on public.support_messages for insert with check (
+      from_role = 'user' and auth.uid() = sender_id and exists (
+        select 1 from public.support_conversations sc
+        where sc.id = support_messages.conversation_id and sc.user_id = auth.uid()
+      )
+    );
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='support_messages' and policyname='msg_insert_admin'
+  ) then
+    create policy msg_insert_admin on public.support_messages for insert with check (
+      from_role = 'admin' and public.is_admin()
+    );
+  end if;
+end$$;
+
+-- Enable Realtime on support tables
+do $$
+begin
+  perform 1 from pg_publication where pubname = 'supabase_realtime';
+  -- add tables to the publication; ignore error if already present
+  begin
+    alter publication supabase_realtime add table public.support_conversations;
+  exception when others then null; end;
+  begin
+    alter publication supabase_realtime add table public.support_messages;
+  exception when others then null; end;
+end$$;

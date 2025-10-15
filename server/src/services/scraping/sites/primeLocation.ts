@@ -120,12 +120,13 @@ export class PrimeLocationAdapter extends BaseAdapter {
     const toPropertyType = (s: string | null): PropertyType | undefined => {
       if (!s) return undefined;
       const v = String(s).toLowerCase();
-      if (v.includes('apartment') || v.includes('flat')) return 'apartment';
-      if (v.includes('maisonette')) return 'apartment';
+      if (v.includes('maisonette')) return 'maisonette';
+      if (v.includes('flat')) return 'flat';
+      if (v.includes('apartment')) return 'apartment';
       if (v.includes('house') || v.includes('bungalow') || v.includes('villa')) return 'house';
       if (v.includes('duplex')) return 'duplex';
-      // Treat any terraced pattern as a house (normalized), we preserve exact label separately
-      if (v.includes('terrace') || v.includes('terraced') || /end\s*of\s*terrace/.test(v)) return 'house';
+      // Treat terraced* specifically
+      if (v.includes('terraced') || /end\s*of\s*terrace/.test(v) || /mid\s*terrace/.test(v) || /\bterrace\b/.test(v)) return 'terraced_house';
       if (v.includes('townhouse')) return 'townhouse';
       if (v.includes('land') || v.includes('plot')) return 'land';
       if (v.includes('studio')) return 'studio';
