@@ -21,7 +21,9 @@ export default function Login() {
         setMessage('Signed in');
         window.location.hash = '#deals';
       } else {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const site = (import.meta as any).env?.VITE_SITE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+        const emailRedirectTo = `${site}/#auth`;
+        const { error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo } });
         if (error) throw error;
         setMessage('Account created. You may be signed in automatically.');
         window.location.hash = '#deals';

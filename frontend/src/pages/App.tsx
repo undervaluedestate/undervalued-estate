@@ -1,11 +1,12 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, lazy, Suspense } from 'react';
 import Header from '../components/Header';
 import Filters from '../components/Filters';
 import Results from '../components/Results';
-import Benchmarks from './Benchmarks';
-import Login from './Login';
-import Support from './Support';
-import Admin from './Admin';
+const Login = lazy(() => import('./Login'));
+const Support = lazy(() => import('./Support'));
+const Admin = lazy(() => import('./Admin'));
+const Benchmarks = lazy(() => import('./Benchmarks'));
+const Auth = lazy(() => import('./Auth'));
 import { supabase } from '../lib/supabaseClient';
 
 const API_URL =
@@ -63,6 +64,11 @@ export default function App(){
   useEffect(() => {
     function applyHash(){
       const raw = window.location.hash.replace('#','');
+      // If Supabase appended tokens in the hash, route to the auth callback page
+      if (/access_token=|refresh_token=|type=/.test(raw)) {
+        setRoute('auth');
+        return;
+      }
       const [r, qs] = raw.split('?');
       const nextRoute = r || 'deals';
       setRoute(nextRoute);
@@ -165,22 +171,36 @@ export default function App(){
   return (
     <div className="container">
       <Header session={!!session} isAdmin={profile?.role === 'admin'} onLogout={handleLogout} />
-      {route === 'login' ? (
+      {route === 'auth' ? (
         <section>
-          <Login />
+          <Suspense fallback={<div className="card">Verifying…</div>}>
+            <Auth />
+          </Suspense>
+        </section>
+      ) : route === 'login' ? (
+        <section>
+          <Suspense fallback={<div className="card">Loading…</div>}>
+            <Login />
+          </Suspense>
         </section>
       ) : route === 'support' ? (
         <section>
-          <Support session={session} />
+          <Suspense fallback={<div className="card">Loading…</div>}>
+            <Support session={session} />
+          </Suspense>
         </section>
       ) : route === 'admin' ? (
         <section>
-          <Admin session={session} isAdmin={profile?.role === 'admin'} />
+          <Suspense fallback={<div className="card">Loading…</div>}>
+            <Admin session={session} isAdmin={profile?.role === 'admin'} />
+          </Suspense>
         </section>
       ) : route === 'benchmarks' ? (
         <>
           <section>
-            <Benchmarks />
+            <Suspense fallback={<div className="card">Loading…</div>}>
+              <Benchmarks isAdmin={profile?.role === 'admin'} isAuthed={!!session} />
+            </Suspense>
           </section>
         </>
       ) : (
@@ -190,13 +210,24 @@ export default function App(){
           </section>
           <section>
             {error && <div className="card" style={{borderColor:'#ef4444'}}>Error: {error}</div>}
-            {loading && <div className="card">Loading deals…</div>}
+            {loading && (
+              <div className="results">
+                {Array.from({length:6}).map((_,i)=> (
+                  <div key={i} className="card">
+                    <div className="skeleton skeleton-line" style={{width:'60%', marginBottom:8}}></div>
+                    <div className="skeleton skeleton-line" style={{width:'90%', marginBottom:6}}></div>
+                    <div className="skeleton skeleton-line" style={{width:'75%', marginBottom:6}}></div>
+                    <div className="skeleton skeleton-line" style={{width:'40%'}}></div>
+                  </div>
+                ))}
+              </div>
+            )}
             {!loading && (
               <>
                 <div className="meta" style={{marginBottom:12}}>
                   <span>Total: {count}</span>
                 </div>
-                <Results items={results} />
+                <Results items={results} isAuthed={!!session} />
               </>
             )}
           </section>

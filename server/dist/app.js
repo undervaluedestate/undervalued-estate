@@ -8,6 +8,7 @@ import scrapeRouter from './routes/scrape';
 import diagnosticsRouter from './routes/diagnostics';
 import clustersRouter from './routes/clusters';
 import authRouter from './routes/auth';
+import supportRouter from './routes/support';
 export const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
@@ -29,6 +30,7 @@ app.use('/api/scrape', scrapeRouter);
 app.use('/api/diagnostics', diagnosticsRouter);
 app.use('/api/clusters', clustersRouter);
 app.use('/api/auth', authRouter);
+app.use('/api/support', supportRouter);
 // Public ping (no auth) to validate that API path resolves quickly
 app.get('/api/ping', (_req, res) => {
     res.json({ status: 'ok', t: new Date().toISOString() });

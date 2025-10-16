@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Logo from './Logo';
+import { supabase } from '../lib/supabaseClient';
 
 type Item = {
   id: string;
@@ -49,7 +50,77 @@ function DealBadge({ cls }: { cls: Item['deal_class'] }){
   return <span className={map[cls] || 'badge'}>{label[cls] || cls}</span>;
 }
 
-export default function Results({ items }: { items: Item[] }): React.ReactElement {
+export default function Results({ items, isAuthed }: { items: Item[]; isAuthed?: boolean }): React.ReactElement {
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [composeItem, setComposeItem] = useState<Item | null>(null);
+  const [pendingItem, setPendingItem] = useState<Item | null>(null);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [composeBody, setComposeBody] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
+
+  async function openCompose(it: Item) {
+    if (!isAuthed) { setPendingItem(it); setShowLoginPrompt(true); return; }
+    setComposeItem(it);
+    setComposeBody(`Hi, I have a question about this listing: ${it.title || ''}`.trim());
+  }
+
+  async function sendMessage() {
+    try {
+      if (!supabase || !composeItem) return;
+      setSending(true); setSendError('');
+      const { data: sess } = await supabase.auth.getSession();
+      const userId = sess?.session?.user?.id;
+      if (!userId) { setShowLoginPrompt(true); return; }
+      // Ensure conversation exists
+      const { data: conv, error: convErr } = await supabase
+        .from('support_conversations')
+        .upsert({ user_id: userId }, { onConflict: 'user_id' })
+        .select('*')
+        .single();
+      if (convErr) throw convErr;
+      const snap = {
+        id: composeItem.id,
+        url: composeItem.url,
+        title: composeItem.title,
+        price: composeItem.price,
+        currency: composeItem.currency,
+        city: composeItem.city,
+        state: composeItem.state,
+        country: composeItem.country,
+        property_type: composeItem.property_type,
+        bedrooms: composeItem.bedrooms,
+        bathrooms: composeItem.bathrooms,
+      };
+      const { data: ins, error: insErr } = await supabase.from('support_messages').insert({
+        conversation_id: conv!.id,
+        from_role: 'user',
+        sender_id: userId,
+        body: composeBody || `Inquiry about listing: ${composeItem.title || composeItem.url}`,
+        property_id: composeItem.id,
+        property_snapshot: snap as any,
+      }).select('id').single();
+      if (insErr) throw insErr;
+      try {
+        const API_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+        await fetch(`${API_URL}/api/support/notify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message_id: ins?.id })
+        });
+      } catch {}
+      setComposeItem(null);
+      setComposeBody('');
+      window.location.hash = '#support';
+    } catch (e: any) {
+      setSendError(e?.message || 'Failed to send');
+    } finally {
+      setSending(false);
+    }
+  }
   if (!items || items.length === 0) {
     return (
       <div className="card empty-state" style={{display:'grid', placeItems:'center', textAlign:'center', padding:'32px'}}>
@@ -60,6 +131,7 @@ export default function Results({ items }: { items: Item[] }): React.ReactElemen
     );
   }
   return (
+    <>
     <div className="results">
       {items.map(it => (
         <article key={it.id} className="card">
@@ -82,11 +154,58 @@ export default function Results({ items }: { items: Item[] }): React.ReactElemen
             <span>•</span>
             <span>% vs market: {it.pct_vs_market ?? '—'}%</span>
           </div>
-          <div style={{marginTop:10}}>
+          <div style={{marginTop:10, display:'flex', gap:8}}>
             <a className="button secondary" href={it.url} target="_blank" rel="noreferrer">Open Listing</a>
+            <button className="button" onClick={() => openCompose(it)} title="Message support about this listing">💬 Message</button>
           </div>
         </article>
       ))}
     </div>
+    {showLoginPrompt && (
+      <div role="dialog" aria-modal="true" aria-label="Login" tabIndex={-1}
+           onKeyDown={(e)=>{ if(e.key==='Escape') setShowLoginPrompt(false); }}
+           onClick={()=>setShowLoginPrompt(false)}
+           style={{position:'fixed', inset:0, background:'rgba(0,0,0,.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1100}}>
+        <div className="card" onClick={(e)=>e.stopPropagation()} style={{maxWidth:420, width:'92%'}}>
+          <div style={{fontWeight:700, marginBottom:8}}>Log in</div>
+          {loginError && <div style={{color:'#ef4444', marginBottom:8}}>Error: {loginError}</div>}
+          <input autoFocus type="email" placeholder="Email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} />
+          <input type="password" placeholder="Password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} />
+          <div className="meta" style={{justifyContent:'flex-end', marginTop:8}}>
+            <button className="badge" onClick={async ()=>{
+              try{
+                setLoginError(''); setLoginLoading(true);
+                const { error } = await supabase!.auth.signInWithPassword({ email: loginEmail, password: loginPassword });
+                if (error) throw error;
+                setShowLoginPrompt(false);
+                if (pendingItem) {
+                  setComposeItem(pendingItem); setComposeBody(`Hi, I have a question about this listing: ${pendingItem.title || ''}`.trim()); setPendingItem(null);
+                }
+              }catch(e:any){ setLoginError(e?.message || 'Login failed'); }
+              finally{ setLoginLoading(false); }
+            }} disabled={loginLoading}>{loginLoading?'Signing in…':'Sign in'}</button>
+            <button className="badge" onClick={()=>setShowLoginPrompt(false)} style={{background:'transparent'}}>Close</button>
+          </div>
+        </div>
+      </div>
+    )}
+    {composeItem && (
+      <div role="dialog" aria-modal="true" aria-label="Message Support" tabIndex={-1}
+           onKeyDown={(e)=>{ if(e.key==='Escape' && !sending) { setComposeItem(null); setComposeBody(''); setSendError(''); } }}
+           onClick={()=>{ if(!sending) { setComposeItem(null); setComposeBody(''); setSendError(''); } }}
+           style={{position:'fixed', inset:0, background:'rgba(0,0,0,.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1100}}>
+        <div className="card" onClick={(e)=>e.stopPropagation()} style={{maxWidth:520, width:'92%'}}>
+          <div style={{fontWeight:700, marginBottom:8}}>Message Support</div>
+          <div style={{opacity:.8, marginBottom:8}}>Listing: <a href={composeItem?.url} target="_blank" rel="noreferrer">{composeItem?.title || composeItem?.url}</a></div>
+          {sendError && <div style={{color:'#ef4444', marginBottom:8}}>Error: {sendError}</div>}
+          <textarea rows={3} value={composeBody} onChange={e=>setComposeBody(e.target.value)} placeholder="Type your message…" />
+          <div className="meta" style={{justifyContent:'flex-end', marginTop:8}}>
+            <button className="badge" onClick={sendMessage} disabled={sending}>{sending ? 'Sending…' : 'Send'}</button>
+            <button className="badge" onClick={()=>{ if(!sending){ setComposeItem(null); setComposeBody(''); setSendError(''); } }} style={{background:'transparent'}}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import React, { useEffect, useMemo, useState } from 'react';
+import { supabase } from '../lib/supabaseClient';
 
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -33,7 +34,9 @@ function formatMoney(n: number | null | undefined, currency = 'NGN'){
   }
 }
 
-export default function Benchmarks(): React.ReactElement {
+type BenchProps = { isAdmin?: boolean; isAuthed?: boolean };
+
+export default function Benchmarks({ isAdmin = false, isAuthed = false }: BenchProps): React.ReactElement {
   const [filters, setFilters] = useState({
     country: 'Nigeria',
     state: '',
@@ -58,6 +61,32 @@ export default function Benchmarks(): React.ReactElement {
   const [detailOrder, setDetailOrder] = useState<'asc'|'desc'>('asc');
   const [openImages, setOpenImages] = useState<Record<string, Record<string, boolean>>>({});
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [showLoginPrompt, setShowLoginPrompt] = useState<boolean>(false);
+  const [pendingItem, setPendingItem] = useState<any | null>(null);
+  const [composeItem, setComposeItem] = useState<any | null>(null);
+  const [composeBody, setComposeBody] = useState<string>('');
+  const [sending, setSending] = useState<boolean>(false);
+  const [sendError, setSendError] = useState<string>('');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  async function sendSupportMessage() {
+    try {
+      if (!supabase) return; if (!composeItem) return;
+      setSending(true); setSendError('');
+      const { data: sess } = await supabase.auth.getSession();
+      const userId = sess?.session?.user?.id; if (!userId) { setShowLoginPrompt(true); return; }
+      const { data: conv, error: convErr } = await supabase.from('support_conversations').upsert({ user_id: userId }, { onConflict: 'user_id' }).select('*').single();
+      if (convErr) throw convErr;
+      const snap = { id: composeItem.id, url: composeItem.url, title: composeItem.title, price: composeItem.price, currency: composeItem.currency, city: composeItem.city, state: composeItem.state, country: composeItem.country, property_type: composeItem.property_type, bedrooms: composeItem.bedrooms, bathrooms: composeItem.bathrooms };
+      const { data: ins, error: insErr } = await supabase.from('support_messages').insert({ conversation_id: conv!.id, from_role: 'user', sender_id: userId, body: composeBody || `Inquiry about listing: ${composeItem.title || composeItem.url}`, property_id: composeItem.id, property_snapshot: snap as any }).select('id').single();
+      if (insErr) throw insErr;
+      try { const API_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin : ''); await fetch(`${API_URL}/api/support/notify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message_id: ins?.id }) }); } catch {}
+      setComposeItem(null); setComposeBody(''); window.location.hash = '#support';
+    } catch (e: any) { setSendError(e?.message || 'Failed to send'); } finally { setSending(false); }
+  }
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -170,7 +199,13 @@ export default function Benchmarks(): React.ReactElement {
       </div>
 
       {error && <div className="card" style={{borderColor:'#ef4444'}}>Error: {error}</div>}
-      {loading && <div className="card">Loading clusters…</div>}
+      {loading && (
+        <div className="card">
+          <div className="skeleton skeleton-line" style={{width:'40%', marginBottom:10}}></div>
+          <div className="skeleton skeleton-line" style={{width:'70%', marginBottom:10}}></div>
+          <div className="skeleton skeleton-line" style={{width:'55%'}}></div>
+        </div>
+      )}
       {!loading && !filters.city && (
         <div className="card">Enter a city to load clusters.</div>
       )}
@@ -181,19 +216,20 @@ export default function Benchmarks(): React.ReactElement {
             <table style={{width:'100%', borderCollapse:'collapse'}}>
               <thead>
                 <tr>
-                  <th style={{textAlign:'left'}}>Country</th>
-                  <th style={{textAlign:'left'}}>State</th>
-                  <th style={{textAlign:'left'}}>City</th>
-                  <th style={{textAlign:'left'}}>Type</th>
-                  <th style={{textAlign:'left'}}>Currency</th>
-                  <th style={{textAlign:'right'}}>Beds</th>
-                  <th style={{textAlign:'right'}}>Baths</th>
-                  <th style={{textAlign:'left'}}>Cluster Key</th>
-                  <th style={{textAlign:'right'}}>Sample</th>
-                  <th style={{textAlign:'right'}}>Min</th>
-                  <th style={{textAlign:'right'}}>Median</th>
-                  <th style={{textAlign:'right'}}>Max</th>
-                  <th style={{textAlign:'right'}}>Avg ppsqm</th>
+                  <th className="col-country" style={{textAlign:'left'}}>Country</th>
+                  <th className="col-state" style={{textAlign:'left'}}>State</th>
+                  <th className="col-city" style={{textAlign:'left'}}>City</th>
+                  <th className="col-type" style={{textAlign:'left'}}>Type</th>
+                  <th className="col-currency" style={{textAlign:'left'}}>Currency</th>
+                  <th className="col-beds" style={{textAlign:'right'}}>Beds</th>
+                  <th className="col-baths" style={{textAlign:'right'}}>Baths</th>
+                  <th className="col-key" style={{textAlign:'left'}}>Cluster Key</th>
+                  <th className="col-sample" style={{textAlign:'right'}}>Sample</th>
+                  <th className="col-min" style={{textAlign:'right'}}>Min</th>
+                  <th className="col-median" style={{textAlign:'right'}}>Median</th>
+                  <th className="col-max" style={{textAlign:'right'}}>Max</th>
+                  <th className="col-ppsqm" style={{textAlign:'right'}}>Avg ppsqm</th>
+                  {isAdmin && <th style={{textAlign:'right'}}>See Listings</th>}
                 </tr>
               </thead>
               <tbody>
@@ -226,26 +262,34 @@ export default function Benchmarks(): React.ReactElement {
                     setExpandedKey(rowKey);
                     if (!details[rowKey]) await ensureDetail();
                   };
+                  const adminDealsHref = `#deals?${params.toString()}`;
                   return (
                   <>
                   <tr key={`${idx}-row`} onClick={onRowClick} className="row-hover" style={{cursor:'pointer'}}>
-                    <td>{r.country || ''}</td>
-                    <td>{r.state || ''}</td>
-                    <td>{r.city || ''}</td>
-                    <td>{r.property_type}</td>
-                    <td>{r.currency}</td>
-                    <td style={{textAlign:'right'}}>{r.bedrooms ?? ''}</td>
-                    <td style={{textAlign:'right'}}>{r.bathrooms ?? ''}</td>
-                    <td>{r.cluster_key_city || ''}</td>
-                    <td style={{textAlign:'right'}}>{r.sample_count}</td>
-                    <td style={{textAlign:'right'}}>{formatMoney(r.min_price, r.currency)}</td>
-                    <td style={{textAlign:'right'}}>{formatMoney(r.median_price, r.currency)}</td>
-                    <td style={{textAlign:'right'}}>{formatMoney(r.max_price, r.currency)}</td>
-                    <td style={{textAlign:'right'}}>{formatMoney(r.avg_ppsqm, r.currency)}</td>
+                    <td className="col-country">{r.country || ''}</td>
+                    <td className="col-state">{r.state || ''}</td>
+                    <td className="col-city">{r.city || ''}</td>
+                    <td className="col-type">{r.property_type}</td>
+                    <td className="col-currency">{r.currency}</td>
+                    <td className="col-beds" style={{textAlign:'right'}}>{r.bedrooms ?? ''}</td>
+                    <td className="col-baths" style={{textAlign:'right'}}>{r.bathrooms ?? ''}</td>
+                    <td className="col-key">{r.cluster_key_city || ''}</td>
+                    <td className="col-sample" style={{textAlign:'right'}}>{r.sample_count}</td>
+                    <td className="col-min" style={{textAlign:'right'}}>{formatMoney(r.min_price, r.currency)}</td>
+                    <td className="col-median" style={{textAlign:'right'}}>{formatMoney(r.median_price, r.currency)}</td>
+                    <td className="col-max" style={{textAlign:'right'}}>{formatMoney(r.max_price, r.currency)}</td>
+                    <td className="col-ppsqm" style={{textAlign:'right'}}>{formatMoney(r.avg_ppsqm, r.currency)}</td>
+                    {isAdmin && (
+                      <td style={{textAlign:'right'}}>
+                        <a className="badge" href={adminDealsHref} onClick={(e)=> e.stopPropagation()}>
+                          See Listings
+                        </a>
+                      </td>
+                    )}
                   </tr>
                   {expandedKey === rowKey && (
                     <tr key={`${idx}-detail`}>
-                      <td colSpan={13}>
+                      <td colSpan={isAdmin ? 14 : 13}>
                         <div className={`collapse ${expandedKey === rowKey ? 'open' : ''}`}>
                           <div className="card" style={{marginTop:8}}>
                             {details[rowKey]?.loading && <div>Loading listings…</div>}
@@ -262,6 +306,7 @@ export default function Benchmarks(): React.ReactElement {
                             <div style={{marginTop:8}}>
                               {(details[rowKey]?.items || []).map((it: any) => {
                                 const toggle = () => {
+                                  if (!isAuthed) { setShowLoginPrompt(true); return; }
                                   setOpenImages(prev => {
                                     const next = { ...prev } as Record<string, Record<string, boolean>>;
                                     const perRow = { ...(next[rowKey] || {}) };
@@ -275,7 +320,13 @@ export default function Benchmarks(): React.ReactElement {
                                 const uniqImages: string[] = Array.from(new Set(rawImgs.map((s: string) => {
                                   try { return new URL(String(s), it.url).toString(); } catch { return String(s); }
                                 }).filter(Boolean))).slice(0, 12) as string[];
-                                const open = !!(openImages[rowKey] && openImages[rowKey][it.id]);
+                                const open = isAuthed && !!(openImages[rowKey] && openImages[rowKey][it.id]);
+                                const onMessage = () => {
+                                  if (!isAuthed) { setPendingItem(it); setShowLoginPrompt(true); return; }
+                                  setComposeItem(it);
+                                  setComposeBody(`Hi, I have a question about this listing: ${it.title || ''}`.trim());
+                                };
+                                // use sendSupportMessage at component scope
                                 return (
                                   <div key={it.id} style={{padding:'8px 0', borderTop:'1px solid rgba(255,255,255,.06)'}}> 
                                     <div className="meta row-hover" role="button" tabIndex={0} onClick={toggle} onKeyDown={(e)=>{ if(e.key==='Enter') toggle(); }} style={{justifyContent:'space-between', cursor:'pointer'}}>
@@ -290,7 +341,10 @@ export default function Benchmarks(): React.ReactElement {
                                         <div>{it.size_sqm ? `${it.size_sqm} sqm` : '—'}</div>
                                         <div>•</div>
                                         <div>{it.price_per_sqm ? formatMoney(it.price_per_sqm, it.currency) : '—'} /sqm</div>
-                                        <div><a className="badge" href={it.url} target="_blank" rel="noreferrer" onClick={(e)=>e.stopPropagation()}>Open Listing</a></div>
+                                        <div style={{display:'flex', gap:8}}>
+                                          <a className="badge" href={it.url} target="_blank" rel="noreferrer" onClick={(e)=>e.stopPropagation()}>Open Listing</a>
+                                          <button className="badge" onClick={(e)=>{ e.stopPropagation(); onMessage(); }}>💬 Message</button>
+                                        </div>
                                       </div>
                                     </div>
                                     {open && (
@@ -332,6 +386,43 @@ export default function Benchmarks(): React.ReactElement {
     {lightboxSrc && (
       <div onClick={()=>setLightboxSrc(null)} style={{position:'fixed', inset:0, background:'rgba(0,0,0,.8)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000}}>
         <img src={lightboxSrc || undefined} alt="Preview" style={{maxWidth:'90vw', maxHeight:'90vh', objectFit:'contain', borderRadius:8, boxShadow:'0 10px 30px rgba(0,0,0,.4)'}} />
+      </div>
+    )}
+    {showLoginPrompt && (
+      <div role="dialog" aria-modal="true" aria-label="Login" tabIndex={-1}
+           onKeyDown={(e)=>{ if(e.key==='Escape') setShowLoginPrompt(false); }}
+           onClick={()=>setShowLoginPrompt(false)}
+           style={{position:'fixed', inset:0, background:'rgba(0,0,0,.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1100}}>
+        <div className="card" onClick={(e)=>e.stopPropagation()} style={{maxWidth:420, width:'92%'}}>
+          <div style={{fontWeight:700, marginBottom:8}}>Log in</div>
+          {loginError && <div style={{color:'#ef4444', marginBottom:8}}>Error: {loginError}</div>}
+          <input autoFocus type="email" placeholder="Email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} />
+          <input type="password" placeholder="Password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} />
+          <div className="meta" style={{justifyContent:'flex-end', marginTop:8}}>
+            <button className="badge" onClick={async ()=>{
+              try{ setLoginError(''); setLoginLoading(true); const { error } = await supabase!.auth.signInWithPassword({ email: loginEmail, password: loginPassword }); if (error) throw error; setShowLoginPrompt(false); if (pendingItem) { setComposeItem(pendingItem); setComposeBody(`Hi, I have a question about this listing: ${pendingItem.title || ''}`.trim()); setPendingItem(null);} }
+              catch(e:any){ setLoginError(e?.message || 'Login failed'); }
+              finally{ setLoginLoading(false); }
+            }} disabled={loginLoading}>{loginLoading?'Signing in…':'Sign in'}</button>
+            <button className="badge" onClick={()=>setShowLoginPrompt(false)} style={{background:'transparent'}}>Close</button>
+          </div>
+        </div>
+      </div>
+    )}
+    {composeItem && (
+      <div role="dialog" aria-modal="true" aria-label="Message Support" tabIndex={-1}
+           onKeyDown={(e)=>{ if(e.key==='Escape' && !sending){ setComposeItem(null); setComposeBody(''); setSendError(''); } }}
+           onClick={()=>{ if(!sending){ setComposeItem(null); setComposeBody(''); setSendError(''); } }}
+           style={{position:'fixed', inset:0, background:'rgba(0,0,0,.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1100}}>
+        <div className="card" onClick={(e)=>e.stopPropagation()} style={{maxWidth:520, width:'92%'}}>
+          <div style={{fontWeight:700, marginBottom:8}}>Message Support</div>
+          {sendError && <div style={{color:'#ef4444', marginBottom:8}}>Error: {sendError}</div>}
+          <textarea rows={3} value={composeBody} onChange={e=>setComposeBody(e.target.value)} placeholder="Type your message…" />
+          <div className="meta" style={{justifyContent:'flex-end', marginTop:8}}>
+            <button className="badge" onClick={sendSupportMessage} disabled={sending}>{sending?'Sending…':'Send'}</button>
+            <button className="badge" onClick={()=>{ if(!sending){ setComposeItem(null); setComposeBody(''); setSendError(''); } }} style={{background:'transparent'}}>Cancel</button>
+          </div>
+        </div>
       </div>
     )}
     </>

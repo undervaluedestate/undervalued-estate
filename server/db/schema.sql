@@ -825,11 +825,16 @@ alter table public.profiles enable row level security;
 
 -- Helper: is the current user an admin?
 create or replace function public.is_admin() returns boolean
-language sql stable
+language plpgsql stable
+security definer
+set search_path = public
 as $$
-  select exists (
+begin
+  -- SECURITY DEFINER ensures this check bypasses RLS on profiles to avoid recursion
+  return exists (
     select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'admin'
   );
+end;
 $$;
 grant execute on function public.is_admin() to anon, authenticated;
 
@@ -847,16 +852,16 @@ begin
   ) then
     create policy profiles_update_own on public.profiles for update using (user_id = auth.uid());
   end if;
-  -- Admin can select/update any
-  if not exists (
+  -- Remove admin-wide policies on profiles to prevent recursive RLS evaluation via is_admin()
+  if exists (
     select 1 from pg_policies where schemaname='public' and tablename='profiles' and policyname='profiles_admin_all_select'
   ) then
-    create policy profiles_admin_all_select on public.profiles for select using (public.is_admin());
+    drop policy profiles_admin_all_select on public.profiles;
   end if;
-  if not exists (
+  if exists (
     select 1 from pg_policies where schemaname='public' and tablename='profiles' and policyname='profiles_admin_all_update'
   ) then
-    create policy profiles_admin_all_update on public.profiles for update using (public.is_admin());
+    drop policy profiles_admin_all_update on public.profiles;
   end if;
   -- Allow authenticated users to insert their own profile (fallback if trigger not used)
   if not exists (
@@ -910,6 +915,8 @@ create table if not exists public.support_messages (
   from_role user_role_enum not null,
   sender_id uuid not null references auth.users(id) on delete cascade,
   body text not null,
+  property_id uuid references public.properties(id) on delete set null,
+  property_snapshot jsonb,
   read_at timestamptz,
   created_at timestamptz not null default now()
 );
