@@ -35,6 +35,13 @@ type FiltersState = {
 
 export default function App(){
   const [route, setRoute] = useState<string>(() => (typeof window !== 'undefined' ? (window.location.hash.replace('#','') || 'deals') : 'deals'));
+  const [theme, setTheme] = useState<'dark'|'light'>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    const saved = window.localStorage?.getItem('theme') as 'dark'|'light'|null;
+    if (saved === 'light' || saved === 'dark') return saved;
+    const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+    return prefersLight ? 'light' : 'dark';
+  });
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [filters, setFilters] = useState<FiltersState>({
@@ -89,6 +96,13 @@ export default function App(){
     applyHash();
     return () => window.removeEventListener('hashchange', applyHash);
   }, []);
+
+  // Apply theme to document
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', theme);
+    }
+  }, [theme]);
 
   // Auth session and profile
   useEffect(() => {
@@ -168,9 +182,20 @@ export default function App(){
     window.location.hash = '#deals';
   }, []);
 
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      try { window.localStorage?.setItem('theme', next); } catch {}
+      if (typeof document !== 'undefined') {
+        document.documentElement.setAttribute('data-theme', next);
+      }
+      return next;
+    });
+  }, []);
+
   return (
     <div className="container">
-      <Header session={!!session} isAdmin={profile?.role === 'admin'} onLogout={handleLogout} />
+      <Header session={!!session} isAdmin={profile?.role === 'admin'} onLogout={handleLogout} theme={theme} onToggleTheme={toggleTheme} />
       {route === 'auth' ? (
         <section>
           <Suspense fallback={<div className="card">Verifying…</div>}>
