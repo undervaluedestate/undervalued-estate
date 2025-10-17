@@ -43,7 +43,7 @@ export default function Header({ session, isAdmin, onLogout, theme = 'dark', onT
   return (
     <header className="header sticky">
       <a href="#deals" className="logo" aria-label="Home" title="Home">
-        <Logo size={36} className="logo-mark" />
+        <Logo size={80} className="logo-mark" />
         <div>
           <div style={{fontSize:16, opacity:.8}}>Undervalued</div>
           <div style={{fontSize:18, fontWeight:800, letterSpacing:.3}}>ESTATE</div>
