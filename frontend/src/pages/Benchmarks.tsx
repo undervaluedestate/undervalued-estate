@@ -147,12 +147,40 @@ export default function Benchmarks({ isAdmin = false, isAuthed = false }: BenchP
 
   useEffect(() => { fetchCountries(); }, []);
 
+  // Detect user country (once) to set default filters.country for clusters page
+  useEffect(() => {
+    try {
+      // If user already chose a country via UI, don't override
+      const saved = typeof window !== 'undefined' ? window.localStorage?.getItem('ud_country_pref') : null;
+      const mapCountry = (code?: string, name?: string) => {
+        if (code === 'NG' || (name||'').toLowerCase().includes('nigeria')) return 'Nigeria';
+        if (code === 'GB' || (name||'').toLowerCase().includes('united kingdom') || (name||'').toLowerCase().includes('england') || (name||'').toLowerCase().includes('great britain')) return 'United Kingdom';
+        return 'United Kingdom';
+      };
+      if (saved) {
+        if (saved !== filters.country) setFilters(prev => ({ ...prev, country: saved, city: '' }));
+        return;
+      }
+      fetch('https://ipwho.is')
+        .then(r => r.json())
+        .then((d) => {
+          if (!d) return;
+          const mapped = mapCountry(d.country_code, d.country);
+          if (mapped && mapped !== filters.country) {
+            setFilters(prev => ({ ...prev, country: mapped, city: '' }));
+            try { window.localStorage?.setItem('ud_country_pref', mapped); } catch {}
+          }
+        })
+        .catch(() => {});
+    } catch {}
+  }, []);
+
   return (
     <>
     <section>
       <div className="card" style={{marginBottom:12}}>
         <div className="filters">
-          <select className="select" value={filters.country} onChange={e=>setFilters({...filters, country: e.target.value, city: ''})}>
+          <select className="select" value={filters.country} onChange={e=>{ const v = e.target.value; setFilters({...filters, country: v, city: ''}); try{ window.localStorage?.setItem('ud_country_pref', v); }catch{} }}>
             <option value="">Select country… {countriesLoading ? '(loading…)': ''}</option>
             {countries.map(c => (
               <option key={c} value={c}>{c}</option>

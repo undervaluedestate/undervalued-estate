@@ -97,6 +97,36 @@ export default function App(){
     return () => window.removeEventListener('hashchange', applyHash);
   }, []);
 
+  // Detect user country (once) to set default filters.country if not specified in hash
+  useEffect(() => {
+    try {
+      const hashHasCountry = typeof window !== 'undefined' && /[?&]country=/.test(window.location.hash);
+      if (hashHasCountry) return; // respect explicit hash param
+      const saved = typeof window !== 'undefined' ? window.localStorage?.getItem('ud_country_pref') : null;
+      const mapCountry = (code?: string, name?: string) => {
+        if (code === 'NG' || (name||'').toLowerCase().includes('nigeria')) return 'Nigeria';
+        if (code === 'GB' || (name||'').toLowerCase().includes('united kingdom') || (name||'').toLowerCase().includes('england') || (name||'').toLowerCase().includes('great britain')) return 'United Kingdom';
+        // Fallback to a supported country
+        return 'United Kingdom';
+      };
+      if (saved) {
+        setFilters(prev => ({ ...prev, country: saved }));
+        return;
+      }
+      fetch('https://ipwho.is')
+        .then(r => r.json())
+        .then((d) => {
+          if (!d) return;
+          const mapped = mapCountry(d.country_code, d.country);
+          if (mapped) {
+            setFilters(prev => ({ ...prev, country: mapped }));
+            try { window.localStorage?.setItem('ud_country_pref', mapped); } catch {}
+          }
+        })
+        .catch(() => {});
+    } catch {}
+  }, []);
+
   // Apply theme to document
   useEffect(() => {
     if (typeof document !== 'undefined') {

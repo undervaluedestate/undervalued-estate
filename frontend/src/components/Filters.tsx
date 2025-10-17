@@ -32,7 +32,7 @@ export default function Filters({ value, onChange, onSearch }: {
     <div>
       <div className="filters">
         <input className="input" placeholder="Search keywords (e.g., Lagos, duplex)" value={value.q} onChange={e=>set('q', e.target.value)} />
-        <select className="select" value={value.country} onChange={e=>set('country', e.target.value)}>
+        <select className="select" value={value.country} onChange={e=>{ const v = e.target.value; set('country', v); try{ window.localStorage?.setItem('ud_country_pref', v); }catch{} }}>
           <option value="">Any country</option>
           <option value="Nigeria">Nigeria</option>
           <option value="United Kingdom">United Kingdom</option>
