@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Logo from './Logo';
 
 type HeaderProps = {
@@ -11,6 +11,35 @@ type HeaderProps = {
 
 export default function Header({ session, isAdmin, onLogout, theme = 'dark', onToggleTheme }: HeaderProps): React.ReactElement {
   const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // Close on Escape and when route changes
+  useEffect(() => {
+    function onKey(e: KeyboardEvent){ if (e.key === 'Escape') setOpen(false); }
+    function onHash(){ setOpen(false); }
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('hashchange', onHash);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('hashchange', onHash); };
+  }, []);
+  // Prevent background scroll when menu is open
+  useEffect(() => {
+    const body = document?.body as HTMLBodyElement | undefined;
+    if (!body) return;
+    const prev = body.style.overflow;
+    if (open) {
+      // Remove focus from any underlying element to avoid visible focus rings
+      try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch {}
+      body.style.overflow = 'hidden';
+    } else {
+      body.style.overflow = prev || '';
+    }
+    return () => { body.style.overflow = prev || ''; };
+  }, [open]);
+  // Focus the menu when opened
+  useEffect(() => {
+    if (open && menuRef.current) {
+      try { menuRef.current.focus(); } catch {}
+    }
+  }, [open]);
   return (
     <header className="header sticky">
       <a href="#deals" className="logo" aria-label="Home" title="Home">
@@ -38,8 +67,11 @@ export default function Header({ session, isAdmin, onLogout, theme = 'dark', onT
         ☰
       </button>
       {open && (
-        <div className="nav-sheet" onClick={()=>setOpen(false)}>
-          <div id="mobile-menu" className="nav-sheet-inner" onClick={(e)=>e.stopPropagation()}>
+        <div className="nav-sheet" role="dialog" aria-modal="true" aria-label="Menu" onClick={()=>setOpen(false)}>
+          <div id="mobile-menu" className="nav-sheet-inner" onClick={(e)=>e.stopPropagation()} tabIndex={-1} ref={menuRef}>
+            <div className="nav-sheet-top">
+              <button className="nav-close" aria-label="Close menu" title="Close" onClick={()=>setOpen(false)}>×</button>
+            </div>
             <a href="#deals" className="badge" onClick={()=>setOpen(false)}>Deals</a>
             <a href="#benchmarks" className="badge" onClick={()=>setOpen(false)}>Clusters</a>
             {session && <a href="#support" className="badge" onClick={()=>setOpen(false)}>Support</a>}

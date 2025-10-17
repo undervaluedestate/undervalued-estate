@@ -61,6 +61,7 @@ export default function Results({ items, isAuthed, isAdmin }: { items: Item[]; i
   const [composeBody, setComposeBody] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
+  const [loginReason, setLoginReason] = useState<'super'|''>('');
 
   async function openCompose(it: Item) {
     if (!isAuthed) { setPendingItem(it); setShowLoginPrompt(true); return; }
@@ -155,11 +156,17 @@ export default function Results({ items, isAuthed, isAdmin }: { items: Item[]; i
             <span>% vs market: {it.pct_vs_market ?? '—'}%</span>
           </div>
           <div style={{marginTop:10, display:'flex', gap:8}}>
-            {isAdmin ? (
-              <a className="button secondary" href={it.url} target="_blank" rel="noreferrer">Open Listing</a>
-            ) : (
-              <a className="button secondary" href="#login" title="Admins only. Login as super user to open external listings.">Login as super user</a>
-            )}
+            <a
+              className="button secondary"
+              href={it.url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e)=>{
+                if(!isAdmin){ e.preventDefault(); setLoginReason('super'); setShowLoginPrompt(true); }
+              }}
+            >
+              Open Listing
+            </a>
             <button className="button" onClick={() => openCompose(it)} title="Message support about this listing">💬 Message</button>
           </div>
         </article>
@@ -171,7 +178,7 @@ export default function Results({ items, isAuthed, isAdmin }: { items: Item[]; i
            onClick={()=>setShowLoginPrompt(false)}
            style={{position:'fixed', inset:0, background:'rgba(0,0,0,.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1100}}>
         <div className="card" onClick={(e)=>e.stopPropagation()} style={{maxWidth:420, width:'92%'}}>
-          <div style={{fontWeight:700, marginBottom:8}}>Log in</div>
+          <div style={{fontWeight:700, marginBottom:8}}>{loginReason==='super' ? 'Login as Super User' : 'Log in'}</div>
           {loginError && <div style={{color:'#ef4444', marginBottom:8}}>Error: {loginError}</div>}
           <input autoFocus type="email" placeholder="Email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} />
           <input type="password" placeholder="Password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} />

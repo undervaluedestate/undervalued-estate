@@ -13,6 +13,12 @@ export default function Support({ session, isAdmin = false }: Props) {
   const [otherTyping, setOtherTyping] = useState<boolean>(false);
   const typingTimeoutRef = useRef<any>(null);
   const channelRef = useRef<any>(null);
+  // Super user login modal state
+  const [showLoginPrompt, setShowLoginPrompt] = useState<boolean>(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
 
   const userId = session?.user?.id || null;
 
@@ -182,11 +188,15 @@ export default function Support({ session, isAdmin = false }: Props) {
                         )}
                         {m.property_snapshot.url && (
                           <div style={{marginTop:6}}>
-                            {isAdmin ? (
-                              <a className="badge" href={m.property_snapshot.url} target="_blank" rel="noreferrer">Open Listing</a>
-                            ) : (
-                              <a className="badge" href="#login" title="Admins only. Login as super user to open external listings.">Login as super user</a>
-                            )}
+                            <a
+                              className="badge"
+                              href={m.property_snapshot.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e)=>{ if(!isAdmin){ e.preventDefault(); setShowLoginPrompt(true); } }}
+                            >
+                              Open Listing
+                            </a>
                           </div>
                         )}
                       </div>
@@ -208,6 +218,31 @@ export default function Support({ session, isAdmin = false }: Props) {
             <button className="badge" onClick={sendMessage}>Send</button>
           </div>
         </>
+      )}
+      {showLoginPrompt && (
+        <div role="dialog" aria-modal="true" aria-label="Login as Super User" tabIndex={-1}
+             onKeyDown={(e)=>{ if(e.key==='Escape') setShowLoginPrompt(false); }}
+             onClick={()=>setShowLoginPrompt(false)}
+             style={{position:'fixed', inset:0, background:'rgba(0,0,0,.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1100}}>
+          <div className="card" onClick={(e)=>e.stopPropagation()} style={{maxWidth:420, width:'92%'}}>
+            <div style={{fontWeight:700, marginBottom:8}}>Login as Super User</div>
+            {loginError && <div style={{color:'#ef4444', marginBottom:8}}>Error: {loginError}</div>}
+            <input autoFocus type="email" placeholder="Email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} />
+            <input type="password" placeholder="Password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} />
+            <div className="meta" style={{justifyContent:'flex-end', marginTop:8}}>
+              <button className="badge" onClick={async ()=>{
+                try{
+                  setLoginError(''); setLoginLoading(true);
+                  const { error } = await supabase!.auth.signInWithPassword({ email: loginEmail, password: loginPassword });
+                  if (error) throw error;
+                  setShowLoginPrompt(false);
+                }catch(e:any){ setLoginError(e?.message || 'Login failed'); }
+                finally{ setLoginLoading(false); }
+              }} disabled={loginLoading}>{loginLoading?'Signing in…':'Sign in'}</button>
+              <button className="badge" onClick={()=>setShowLoginPrompt(false)} style={{background:'transparent'}}>Close</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

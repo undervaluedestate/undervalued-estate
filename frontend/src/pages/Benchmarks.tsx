@@ -69,6 +69,7 @@ export default function Benchmarks({ isAdmin = false, isAuthed = false }: BenchP
   const [sendError, setSendError] = useState<string>('');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginReason, setLoginReason] = useState<'super'|''>('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
 
@@ -370,11 +371,18 @@ export default function Benchmarks({ isAdmin = false, isAuthed = false }: BenchP
                                         <div>•</div>
                                         <div>{it.price_per_sqm ? formatMoney(it.price_per_sqm, it.currency) : '—'} /sqm</div>
                                         <div style={{display:'flex', gap:8}}>
-                                          {isAdmin ? (
-                                            <a className="badge" href={it.url} target="_blank" rel="noreferrer" onClick={(e)=>e.stopPropagation()}>Open Listing</a>
-                                          ) : (
-                                            <a className="badge" href="#login" onClick={(e)=>e.stopPropagation()} title="Admins only. Login as super user to open external listings.">Login as super user</a>
-                                          )}
+                                          <a
+                                            className="badge"
+                                            href={it.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            onClick={(e)=>{
+                                              e.stopPropagation();
+                                              if(!isAdmin){ e.preventDefault(); setLoginReason('super'); setShowLoginPrompt(true); }
+                                            }}
+                                          >
+                                            Open Listing
+                                          </a>
                                           <button className="badge" onClick={(e)=>{ e.stopPropagation(); onMessage(); }}>💬 Message</button>
                                         </div>
                                       </div>
@@ -426,7 +434,7 @@ export default function Benchmarks({ isAdmin = false, isAuthed = false }: BenchP
            onClick={()=>setShowLoginPrompt(false)}
            style={{position:'fixed', inset:0, background:'rgba(0,0,0,.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1100}}>
         <div className="card" onClick={(e)=>e.stopPropagation()} style={{maxWidth:420, width:'92%'}}>
-          <div style={{fontWeight:700, marginBottom:8}}>Log in</div>
+          <div style={{fontWeight:700, marginBottom:8}}>{loginReason==='super' ? 'Login as Super User' : 'Log in'}</div>
           {loginError && <div style={{color:'#ef4444', marginBottom:8}}>Error: {loginError}</div>}
           <input autoFocus type="email" placeholder="Email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} />
           <input type="password" placeholder="Password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} />
