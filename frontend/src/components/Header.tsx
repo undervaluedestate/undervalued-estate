@@ -31,7 +31,7 @@ export default function Header({ session, isAdmin, onLogout, theme = 'dark', onT
         {!session ? (
           <a href="#login" className="badge" style={{textDecoration:'none', color:'inherit'}}>Login</a>
         ) : (
-          <button className="badge" onClick={() => { if (onLogout) onLogout(); }} style={{background:'transparent', border:'1px solid rgba(255,255,255,.2)', cursor:'pointer'}}>Logout</button>
+          <button className="badge" onClick={() => { if (onLogout) onLogout(); }} style={{background:'transparent', border:'1px solid var(--border-strong)', cursor:'pointer'}}>Logout</button>
         )}
       </nav>
       <button className="nav-toggle" aria-label="Menu" title="Menu" aria-expanded={open} aria-controls="mobile-menu" onClick={()=>setOpen(v=>!v)}>
@@ -50,7 +50,7 @@ export default function Header({ session, isAdmin, onLogout, theme = 'dark', onT
             {!session ? (
               <a href="#login" className="badge" onClick={()=>setOpen(false)}>Login</a>
             ) : (
-              <button className="badge" onClick={()=>{ setOpen(false); if (onLogout) onLogout(); }} style={{background:'transparent', border:'1px solid rgba(255,255,255,.2)', cursor:'pointer'}}>Logout</button>
+              <button className="badge" onClick={()=>{ setOpen(false); if (onLogout) onLogout(); }} style={{background:'transparent', border:'1px solid var(--border-strong)', cursor:'pointer'}}>Logout</button>
             )}
           </div>
         </div>

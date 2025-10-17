@@ -328,10 +328,10 @@ export default function Benchmarks({ isAdmin = false, isAuthed = false }: BenchP
                                 };
                                 // use sendSupportMessage at component scope
                                 return (
-                                  <div key={it.id} style={{padding:'8px 0', borderTop:'1px solid rgba(255,255,255,.06)'}}> 
+                                  <div key={it.id} style={{padding:'8px 0', borderTop:'1px solid var(--border)'}}> 
                                     <div className="meta row-hover" role="button" tabIndex={0} onClick={toggle} onKeyDown={(e)=>{ if(e.key==='Enter') toggle(); }} style={{justifyContent:'space-between', cursor:'pointer'}}>
                                       <div style={{display:'flex', gap:8, alignItems:'center'}}>
-                                        {ptLabel && <span className="badge" style={{background:'rgba(255,255,255,.08)'}}>{ptLabel}</span>}
+                                        {ptLabel && <span className="badge" style={{background:'var(--panel-subtle)'}}>{ptLabel}</span>}
                                         <div style={{fontWeight:600}}>{it.title || 'Listing'}</div>
                                         <div style={{opacity:.8}}>{[it.neighborhood, it.city, it.state].filter(Boolean).join(', ')}</div>
                                       </div>
@@ -352,7 +352,7 @@ export default function Benchmarks({ isAdmin = false, isAuthed = false }: BenchP
                                         {uniqImages.length ? (
                                           <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(140px, 1fr))', gap:8}}>
                                             {uniqImages.map((u: string) => (
-                                              <img key={u} src={u} alt="Listing image" style={{width:'100%', height:120, objectFit:'cover', borderRadius:6, border:'1px solid rgba(255,255,255,.08)', background:'#111'}} onClick={(e)=>{ e.stopPropagation(); setLightboxSrc(u); }} />
+                                              <img key={u} src={u} alt="Listing image" style={{width:'100%', height:120, objectFit:'cover', borderRadius:6, border:'1px solid var(--border-soft)', background:'var(--panel)'}} onClick={(e)=>{ e.stopPropagation(); setLightboxSrc(u); }} />
                                             ))}
                                           </div>
                                         ) : (

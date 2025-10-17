@@ -206,7 +206,7 @@ export default function Admin({ session, isAdmin }: Props) {
 
   return (
     <div className="card admin-grid" style={{display:'grid', gridTemplateColumns:'260px 1fr', gap:12}}>
-      <div className="admin-sidebar" style={{borderRight: '1px solid rgba(255,255,255,.06)', paddingRight: 8}}>
+      <div className="admin-sidebar" style={{borderRight: '1px solid var(--border)', paddingRight: 8}}>
         <div style={{fontWeight:700, marginBottom:8}}>Conversations</div>
         <div className="meta" style={{gap:8, marginBottom:8}}>
           <div className="segmented">
@@ -237,20 +237,20 @@ export default function Admin({ session, isAdmin }: Props) {
           <div style={{fontWeight:700}}>Conversation</div>
           <button className="badge show-mobile" onClick={()=>setDrawerOpen(true)}>Conversations</button>
         </div>
-        <div ref={listRef} style={{maxHeight: 520, overflowY:'auto', padding:8, border:'1px solid rgba(255,255,255,.1)', borderRadius:6}}>
+        <div ref={listRef} style={{maxHeight: 520, overflowY:'auto', padding:8, border:'1px solid var(--border-soft)', borderRadius:6}}>
           {messages.length === 0 && <div style={{opacity:.7}}>No messages yet.</div>}
           {messages.map(m => {
             const mine = m.from_role === 'admin';
             return (
               <div key={m.id} style={{display:'flex', justifyContent: mine ? 'flex-end' : 'flex-start', marginBottom: 6}}>
-                <div style={{maxWidth: '70%', padding: '8px 10px', borderRadius: 8, background: mine ? 'rgba(59,130,246,.2)' : 'rgba(255,255,255,.06)'}}>
+                <div style={{maxWidth: '70%', padding: '8px 10px', borderRadius: 8, background: mine ? 'rgba(59,130,246,.2)' : 'var(--bubble-other)'}}>
                   <div style={{whiteSpace: 'pre-wrap'}}>{m.body}</div>
                   <div style={{opacity:.6, fontSize: 11, marginTop: 4}}>{new Date(m.created_at).toLocaleString()}</div>
                   {mine && m.id === lastMineId && m.read_at && (
                     <div style={{opacity:.7, fontSize:11, marginTop:2}}>Seen</div>
                   )}
                   {m.property_snapshot && (
-                    <div style={{marginTop:8, padding:8, border:'1px solid rgba(255,255,255,.12)', borderRadius:6, background:'rgba(255,255,255,.03)'}}>
+                    <div style={{marginTop:8, padding:8, border:'1px solid var(--border-strong)', borderRadius:6, background:'var(--panel-subtle)'}}>
                       <div style={{fontWeight:600, marginBottom:4}}>{m.property_snapshot.title || 'Listing'}</div>
                       <div className="meta" style={{gap:8}}>
                         {m.property_snapshot.price != null && <span>Price: {m.property_snapshot.currency ? new Intl.NumberFormat('en-GB',{style:'currency', currency: String(m.property_snapshot.currency).toUpperCase()}).format(Number(m.property_snapshot.price)) : m.property_snapshot.price}</span>}

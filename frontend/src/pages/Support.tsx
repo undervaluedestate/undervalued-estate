@@ -151,20 +151,20 @@ export default function Support({ session }: Props) {
       {error && <div style={{color:'#ef4444'}}>Error: {error}</div>}
       {isAuthed && (
         <>
-          <div ref={listRef} style={{maxHeight: '60vh', overflowY: 'auto', padding: 8, border: '1px solid rgba(255,255,255,.1)', borderRadius: 6}}>
+          <div ref={listRef} style={{maxHeight: '60vh', overflowY: 'auto', padding: 8, border: '1px solid var(--border-soft)', borderRadius: 6}}>
             {messages.length === 0 && <div style={{opacity:.7}}>Start a conversation with us — we usually reply instantly.</div>}
             {messages.map((m) => {
               const mine = m.from_role === 'user';
               return (
                 <div key={m.id} style={{display:'flex', justifyContent: mine ? 'flex-end' : 'flex-start', marginBottom: 6}}>
-                  <div style={{maxWidth: '70%', padding: '8px 10px', borderRadius: 8, background: mine ? 'rgba(59,130,246,.2)' : 'rgba(255,255,255,.06)'}}>
+                  <div style={{maxWidth: '70%', padding: '8px 10px', borderRadius: 8, background: mine ? 'rgba(59,130,246,.2)' : 'var(--bubble-other)'}}>
                     <div style={{whiteSpace: 'pre-wrap'}}>{m.body}</div>
                     <div style={{opacity:.6, fontSize: 11, marginTop: 4}}>{new Date(m.created_at).toLocaleString()}</div>
                     {mine && m.id === lastMineId && m.read_at && (
                       <div style={{opacity:.7, fontSize:11, marginTop:2}}>Seen</div>
                     )}
                     {m.property_snapshot && (
-                      <div style={{marginTop:8, padding:8, border:'1px solid rgba(255,255,255,.12)', borderRadius:6, background:'rgba(255,255,255,.03)'}}>
+                      <div style={{marginTop:8, padding:8, border:'1px solid var(--border-strong)', borderRadius:6, background:'var(--panel-subtle)'}}>
                         <div style={{fontWeight:600, marginBottom:4}}>{m.property_snapshot.title || 'Listing'}</div>
                         <div className="meta" style={{gap:8}}>
                           {m.property_snapshot.price != null && <span>Price: {m.property_snapshot.currency ? new Intl.NumberFormat('en-GB',{style:'currency', currency: String(m.property_snapshot.currency).toUpperCase()}).format(Number(m.property_snapshot.price)) : m.property_snapshot.price}</span>}
@@ -176,7 +176,7 @@ export default function Support({ session }: Props) {
                         {m.property_snapshot.images && m.property_snapshot.images.length > 0 && (
                           <div style={{display:'flex', gap:8, marginTop:6}}>
                             {m.property_snapshot.images.slice(0,3).map((u: string) => (
-                              <img key={u} src={u} alt="Listing" style={{width:72, height:72, objectFit:'cover', borderRadius:6, border:'1px solid rgba(255,255,255,.08)'}} />
+                              <img key={u} src={u} alt="Listing" style={{width:72, height:72, objectFit:'cover', borderRadius:6, border:'1px solid var(--border-soft)'}} />
                             ))}
                           </div>
                         )}
