@@ -8,8 +8,20 @@
     <link rel="icon" href="/favicon.svg" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="mask-icon" href="/favicon.svg" color="#38bdf8" />
-    <script type="module" crossorigin src="/assets/index-NQSIgJLP.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-B-mehTbC.css">
+    <script>
+      (function(){
+        try{
+          var t = localStorage.getItem('theme');
+          if (t === 'light' || t === 'dark') {
+            document.documentElement.setAttribute('data-theme', t);
+          } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+            document.documentElement.setAttribute('data-theme', 'light');
+          }
+        }catch(e){}
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-jmXoZW_F.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DvDU_Tyc.css">
   </head>
   <body>
     <div id="root"></div>

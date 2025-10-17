@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
-type Props = { session: any };
+type Props = { session: any; isAdmin?: boolean };
 
-export default function Support({ session }: Props) {
+export default function Support({ session, isAdmin = false }: Props) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -180,7 +180,15 @@ export default function Support({ session }: Props) {
                             ))}
                           </div>
                         )}
-                        {m.property_snapshot.url && <div style={{marginTop:6}}><a className="badge" href={m.property_snapshot.url} target="_blank" rel="noreferrer">Open Listing</a></div>}
+                        {m.property_snapshot.url && (
+                          <div style={{marginTop:6}}>
+                            {isAdmin ? (
+                              <a className="badge" href={m.property_snapshot.url} target="_blank" rel="noreferrer">Open Listing</a>
+                            ) : (
+                              <a className="badge" href="#login" title="Admins only. Login as super user to open external listings.">Login as super user</a>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

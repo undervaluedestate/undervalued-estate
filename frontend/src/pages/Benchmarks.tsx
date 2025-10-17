@@ -342,7 +342,11 @@ export default function Benchmarks({ isAdmin = false, isAuthed = false }: BenchP
                                         <div>•</div>
                                         <div>{it.price_per_sqm ? formatMoney(it.price_per_sqm, it.currency) : '—'} /sqm</div>
                                         <div style={{display:'flex', gap:8}}>
-                                          <a className="badge" href={it.url} target="_blank" rel="noreferrer" onClick={(e)=>e.stopPropagation()}>Open Listing</a>
+                                          {isAdmin ? (
+                                            <a className="badge" href={it.url} target="_blank" rel="noreferrer" onClick={(e)=>e.stopPropagation()}>Open Listing</a>
+                                          ) : (
+                                            <a className="badge" href="#login" onClick={(e)=>e.stopPropagation()} title="Admins only. Login as super user to open external listings.">Login as super user</a>
+                                          )}
                                           <button className="badge" onClick={(e)=>{ e.stopPropagation(); onMessage(); }}>💬 Message</button>
                                         </div>
                                       </div>

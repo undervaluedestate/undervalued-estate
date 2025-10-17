@@ -211,7 +211,7 @@ export default function App(){
       ) : route === 'support' ? (
         <section>
           <Suspense fallback={<div className="card">Loading…</div>}>
-            <Support session={session} />
+            <Support session={session} isAdmin={profile?.role === 'admin'} />
           </Suspense>
         </section>
       ) : route === 'admin' ? (
@@ -252,7 +252,7 @@ export default function App(){
                 <div className="meta" style={{marginBottom:12}}>
                   <span>Total: {count}</span>
                 </div>
-                <Results items={results} isAuthed={!!session} />
+                <Results items={results} isAuthed={!!session} isAdmin={profile?.role === 'admin'} />
               </>
             )}
           </section>

@@ -50,7 +50,7 @@ function DealBadge({ cls }: { cls: Item['deal_class'] }){
   return <span className={map[cls] || 'badge'}>{label[cls] || cls}</span>;
 }
 
-export default function Results({ items, isAuthed }: { items: Item[]; isAuthed?: boolean }): React.ReactElement {
+export default function Results({ items, isAuthed, isAdmin }: { items: Item[]; isAuthed?: boolean; isAdmin?: boolean }): React.ReactElement {
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [composeItem, setComposeItem] = useState<Item | null>(null);
   const [pendingItem, setPendingItem] = useState<Item | null>(null);
@@ -155,7 +155,11 @@ export default function Results({ items, isAuthed }: { items: Item[]; isAuthed?:
             <span>% vs market: {it.pct_vs_market ?? '—'}%</span>
           </div>
           <div style={{marginTop:10, display:'flex', gap:8}}>
-            <a className="button secondary" href={it.url} target="_blank" rel="noreferrer">Open Listing</a>
+            {isAdmin ? (
+              <a className="button secondary" href={it.url} target="_blank" rel="noreferrer">Open Listing</a>
+            ) : (
+              <a className="button secondary" href="#login" title="Admins only. Login as super user to open external listings.">Login as super user</a>
+            )}
             <button className="button" onClick={() => openCompose(it)} title="Message support about this listing">💬 Message</button>
           </div>
         </article>
